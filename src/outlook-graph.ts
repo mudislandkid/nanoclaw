@@ -100,8 +100,8 @@ export function saveTokens(
 ): void {
   const expiresAt = Date.now() + expiresIn * 1000;
   const data = { accessToken, refreshToken, expiresAt };
-  fs.mkdirSync(CREDS_DIR, { recursive: true });
-  fs.writeFileSync(path.join(CREDS_DIR, 'tokens.json'), JSON.stringify(data, null, 2));
+  fs.mkdirSync(CREDS_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(CREDS_DIR, 'tokens.json'), JSON.stringify(data, null, 2), { mode: 0o600 });
   logger.debug({ expiresAt }, 'Outlook tokens saved');
 }
 
@@ -172,6 +172,8 @@ export async function refreshAccessToken(
 // Delta query
 // ---------------------------------------------------------------------------
 
+const MAX_PAGES = 50;
+
 const DELTA_BASE_URL =
   `${GRAPH_BASE}/me/mailFolders/inbox/messages/delta` +
   `?$select=id,subject,from,bodyPreview,receivedDateTime,isRead`;
@@ -189,8 +191,14 @@ export async function fetchDelta(
   const emails: GraphEmail[] = [];
   let nextUrl: string = deltaLink ?? DELTA_BASE_URL;
   let finalDeltaLink = '';
+  let pageCount = 0;
 
   while (nextUrl) {
+    if (pageCount >= MAX_PAGES) {
+      logger.warn({ pageCount }, 'fetchDelta: MAX_PAGES limit reached, stopping pagination');
+      break;
+    }
+    pageCount++;
     const res = await fetch(nextUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -234,7 +242,7 @@ export async function markAsRead(
   accessToken: string,
   messageId: string,
 ): Promise<void> {
-  const url = `${GRAPH_BASE}/me/messages/${messageId}`;
+  const url = `${GRAPH_BASE}/me/messages/${encodeURIComponent(messageId)}`;
   const res = await fetch(url, {
     method: 'PATCH',
     headers: {

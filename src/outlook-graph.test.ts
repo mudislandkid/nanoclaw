@@ -174,10 +174,11 @@ describe('saveTokens', () => {
 
     saveTokens('new-access', 'new-refresh', 3600);
 
-    expect(mockFs.mkdirSync).toHaveBeenCalledWith(CREDS_DIR, { recursive: true });
+    expect(mockFs.mkdirSync).toHaveBeenCalledWith(CREDS_DIR, { recursive: true, mode: 0o700 });
     expect(mockFs.writeFileSync).toHaveBeenCalledOnce();
 
-    const [, written] = mockFs.writeFileSync.mock.calls[0] as [string, string];
+    const [, written] = mockFs.writeFileSync.mock.calls[0] as [string, string, unknown];
+    expect(mockFs.writeFileSync.mock.calls[0][2]).toEqual({ mode: 0o600 });
     const parsed = JSON.parse(written);
     expect(parsed.accessToken).toBe('new-access');
     expect(parsed.refreshToken).toBe('new-refresh');
