@@ -44,11 +44,15 @@ Credentials stored at `~/.outlook-mcp/` (outside the project directory, same pat
 └── tokens.json        # OAuth access + refresh tokens
 ```
 
-Refresh tokens are long-lived for personal Microsoft accounts. The channel auto-refreshes the access token before each poll cycle when it's near expiry.
+Refresh tokens for personal Microsoft accounts expire after **90 days of inactivity** and are revoked on password change or security events. The channel auto-refreshes the access token when it has less than 5 minutes until expiry (Microsoft access tokens last 1 hour).
+
+**Token refresh failure handling:** If the refresh token exchange returns `invalid_grant` (expired or revoked), the channel logs a clear error (`Outlook: refresh token expired — re-run /add-outlook to re-authenticate`), stops polling, and marks the channel as disconnected. The agent's next Signal notification attempt will surface the issue.
 
 ### Container Access
 
 `~/.outlook-mcp/` is mounted read-only into agent containers via `additionalMounts` in the group's `containerConfig`. This gives the MCP tools access to authenticate against Microsoft Graph without exposing credentials to the project directory.
+
+**Mount allowlist:** The mount-security system (`~/.config/nanoclaw/mount-allowlist.json`) must include `~/.outlook-mcp` as an allowed root. The `/add-outlook` setup skill adds this automatically during the registration phase. Without it, the container runner silently rejects the mount and the MCP tools will have no credentials.
 
 ## 3. Inbound Flow (New Emails to Agent)
 
@@ -56,7 +60,7 @@ Refresh tokens are long-lived for personal Microsoft accounts. The channel auto-
 
 - Poll every **60 seconds** using Microsoft Graph delta queries
 - Endpoint: `/me/mailFolders/inbox/messages/delta`
-- Delta token persisted to disk (e.g. `store/outlook-delta-token.txt`) so state survives restarts
+- Delta token persisted to the SQLite database (consistent with how other channel state is stored in `store/messages.db`) so state survives restarts
 - Only new/modified messages returned — zero wasted API calls
 
 ### First Run
@@ -97,6 +101,8 @@ The agent triages based on this compact summary. If it needs the full body, it u
 
 After the agent processes an email, mark it as read via Graph API (`PATCH /me/messages/{id}` with `isRead: true`). This prevents re-processing on the next poll cycle.
 
+**Delta re-processing guard:** Marking an email as read modifies it, which causes it to reappear in the next delta response as a "modified" message. The poll loop must filter incoming delta results to only process messages where `isRead` is `false` at the time of receipt. Messages that appear in the delta with `isRead: true` are skipped — they were already processed.
+
 ## 4. Outbound Flow (Agent Actions)
 
 ### MCP Tools
@@ -112,6 +118,15 @@ The following tools are available to the agent inside the container:
 | `outlook_move_email` | Move an email to a specified folder (for organising) |
 | `outlook_list_folders` | List available mail folders |
 
+### MCP Server Implementation
+
+The MCP server lives at `container/outlook-mcp/` and is a lightweight TypeScript server using the `@modelcontextprotocol/sdk` package (already available in the container image). It:
+
+- Reads credentials from `/workspace/extra/outlook-mcp/` (the mounted `~/.outlook-mcp/` directory)
+- Authenticates against Microsoft Graph using the same access/refresh token flow as the channel
+- Exposes the tools listed above via the MCP stdio transport
+- Is registered in the container's MCP config so the agent can call the tools naturally
+
 ### Approval Gate
 
 The agent must **never** send an email without explicit user approval:
@@ -121,7 +136,7 @@ The agent must **never** send an email without explicit user approval:
 3. User reviews on Signal: "yes send it" / "change X" / "don't send"
 4. Only on explicit approval does the agent call `outlook_send_draft`
 
-This constraint is enforced via the agent's instructions in the group `CLAUDE.md` and by the tool descriptions in the MCP server.
+This constraint is enforced via the agent's instructions in the group `CLAUDE.md` and by the tool descriptions in the MCP server. Note: this is a **behavioural constraint**, not a technical access control boundary — the `Mail.Send` permission is granted at the OAuth level, so the MCP tool technically can send. The guard is the agent's instructions and the tool description telling the agent it must have user approval first.
 
 ## 5. Cross-Channel Notifications
 
@@ -147,9 +162,9 @@ Non-important emails (newsletters, promotions, automated notifications) are sile
 | `src/channels/outlook.ts` | Channel class: polling, Graph API calls, message conversion |
 | `src/channels/outlook.test.ts` | Unit tests |
 | `src/channels/index.ts` | Add `import './outlook.js'` |
-| `container/outlook-mcp/` | MCP server for email tools (runs inside container) |
+| `container/outlook-mcp/` | MCP server for email tools (TypeScript, runs inside container) |
 | `setup/outlook-auth.ts` | OAuth flow (local server, browser redirect, token save) |
-| `store/outlook-delta-token.txt` | Persisted delta query token |
+| `store/messages.db` | Delta token stored in existing SQLite DB (new table or key-value row) |
 
 ### Channel Class
 
@@ -157,26 +172,40 @@ Non-important emails (newsletters, promotions, automated notifications) are sile
 class OutlookChannel implements Channel {
   name = 'outlook';
 
+  private opts: ChannelOpts;
+  private connected = false;
+
   // Poll timer
   private pollInterval: NodeJS.Timeout | null = null;
 
-  // Microsoft Graph client (simple fetch wrapper, no heavy SDK)
+  // Microsoft Graph auth (simple fetch, no heavy SDK)
   private accessToken: string;
   private refreshToken: string;
-  private deltaLink: string | null;
+  private tokenExpiry: number;         // Unix ms — refresh when < 5min remaining
+  private deltaLink: string | null;    // Persisted delta query token
+  private userEmail: string;           // User's email address (for JID)
+
+  constructor(opts: ChannelOpts) {
+    this.opts = opts;
+    // Load tokens from ~/.outlook-mcp/
+  }
 
   async connect(): Promise<void>;      // Load tokens, start polling
-  async disconnect(): Promise<void>;   // Stop polling
-  async sendMessage(jid, text): Promise<void>;  // No-op or log (outbound is via MCP tools)
+  async disconnect(): Promise<void>;   // Stop polling, clear interval
+  async sendMessage(jid, text): Promise<void>;  // No-op with debug log (outbound is via MCP tools)
   isConnected(): boolean;
   ownsJid(jid: string): boolean;       // jid.startsWith('outlook:')
 
   // Internal
-  private async poll(): Promise<void>;
-  private async refreshAccessToken(): Promise<void>;
+  private async poll(): Promise<void>;              // Delta query, filter isRead=false, emit onChatMetadata + onMessage
+  private async refreshAccessToken(): Promise<void>; // Refresh if <5min to expiry, disconnect on invalid_grant
   private async markAsRead(messageId: string): Promise<void>;
 }
 ```
+
+**`onChatMetadata`:** The channel calls `opts.onChatMetadata('outlook:{email}', timestamp, 'Outlook Inbox', 'outlook', false)` during each poll cycle for every new email, matching the pattern used by WhatsApp and Signal for group/chat discovery.
+
+**`sendMessage` behaviour:** The router may call `sendMessage` on the outlook channel when the agent produces output routed to an outlook JID. This is intentionally a no-op with a debug log — all agent responses for the outlook group are delivered via cross-channel messaging to Signal. The agent is never expected to send email through `sendMessage`; email sending is exclusively via the `outlook_send_draft` MCP tool.
 
 ### Registration
 
@@ -231,27 +260,28 @@ Channel: outlook
 - Check if `~/.outlook-mcp/tokens.json` exists
 - If both exist, skip to Phase 5 (Verify)
 
-### Phase 2: Azure App Registration
+### Phase 2: Code Installation
+- Merge from fork branch: `git fetch outlook main && git merge outlook/main`
+- Handle package-lock.json conflicts (standard pattern)
+- `npm install && npm run build`
+
+### Phase 3: Azure App Registration
 - Guide user through portal.azure.com step by step
 - Create app registration → set account type → add permissions → generate secret
 - User pastes client ID and client secret
 
-### Phase 3: OAuth Flow
-- Run `npx tsx setup/outlook-auth.ts`
+### Phase 4: OAuth Flow
+- Run `npx tsx setup/outlook-auth.ts` (installed in Phase 2)
 - Starts local HTTP server on `:3333`
 - Opens browser to Microsoft login
 - User signs in, consents to permissions
 - Callback captures auth code, exchanges for tokens
 - Saves everything to `~/.outlook-mcp/`
 
-### Phase 4: Code Installation
-- Merge from fork branch: `git fetch outlook main && git merge outlook/main`
-- Handle package-lock.json conflicts (standard pattern)
-- `npm install && npm run build`
-
 ### Phase 5: Registration
 - Register `outlook:{email}` as a group
 - Create `groups/outlook_inbox/CLAUDE.md` with triage instructions
+- Add `~/.outlook-mcp` to the mount allowlist (`~/.config/nanoclaw/mount-allowlist.json`) so the container can access credentials
 
 ### Phase 6: Verify
 - Build and restart service
