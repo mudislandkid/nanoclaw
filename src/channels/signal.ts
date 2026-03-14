@@ -7,6 +7,8 @@ import os from 'os';
 
 import { ASSISTANT_NAME, STORE_DIR } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
+import { processImage } from '../image.js';
 import { logger } from '../logger.js';
 import { transcribeAudioFile } from '../transcription.js';
 import { Channel, NewMessage } from '../types.js';
@@ -247,8 +249,16 @@ export class SignalChannel implements Channel {
       );
     }) as Record<string, unknown> | undefined;
 
-    // Skip protocol-only messages — no text and no audio attachment
-    if (!text && !audioAttachment) return;
+    // Find image attachments
+    const imageAttachments = attachments.filter((att) => {
+      const a = att as Record<string, unknown>;
+      return (
+        typeof a.contentType === 'string' && a.contentType.startsWith('image/')
+      );
+    }) as Array<Record<string, unknown>>;
+
+    // Skip protocol-only messages — no text, no audio, no images
+    if (!text && !audioAttachment && imageAttachments.length === 0) return;
 
     const chatJid = phoneToJid(chatPhone);
 
@@ -300,6 +310,55 @@ export class SignalChannel implements Channel {
         } catch (err) {
           logger.error({ err }, 'Signal: voice transcription error');
           finalContent = '[Voice Message - transcription failed]';
+        }
+      }
+    }
+
+    // Handle image attachments
+    if (imageAttachments.length > 0) {
+      const group = groups[chatJid];
+      const groupDir = group ? resolveGroupFolderPath(group.folder) : null;
+
+      for (const imgAtt of imageAttachments) {
+        const attId = imgAtt.id as string | undefined;
+        const signalAttachDir = path.join(
+          os.homedir(),
+          '.local',
+          'share',
+          'signal-cli',
+          'attachments',
+        );
+        const localPath =
+          attId && fs.existsSync(path.join(signalAttachDir, attId))
+            ? path.join(signalAttachDir, attId)
+            : (imgAtt.localPath as string | undefined);
+
+        if (!localPath || !groupDir) {
+          logger.warn(
+            { attId, hasGroupDir: !!groupDir },
+            'Signal: image attachment has no resolvable local path',
+          );
+          finalContent += '\n[Image - unavailable]';
+          continue;
+        }
+
+        try {
+          const buffer = fs.readFileSync(localPath);
+          const result = await processImage(buffer, groupDir, '');
+          if (result) {
+            finalContent = finalContent
+              ? `${finalContent}\n${result.content}`
+              : result.content;
+            logger.info(
+              { chatJid, relativePath: result.relativePath },
+              'Signal: image processed',
+            );
+          } else {
+            finalContent += '\n[Image - processing failed]';
+          }
+        } catch (err) {
+          logger.error({ err }, 'Signal: image processing error');
+          finalContent += '\n[Image - processing failed]';
         }
       }
     }
