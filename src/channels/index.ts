@@ -14,3 +14,6 @@ import './signal.js';
 
 // whatsapp
 import './whatsapp.js';
+
+// outlook
+import './outlook.js';
