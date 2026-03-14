@@ -337,6 +337,9 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+  // Discover optional MCP servers based on mounted credentials
+  const hasOutlookMcp = fs.existsSync('/workspace/extra/outlook-mcp/tokens.json');
+
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -407,7 +410,8 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        ...(hasOutlookMcp ? ['mcp__outlook-mcp__*'] : []),
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -423,6 +427,12 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...(hasOutlookMcp ? {
+          'outlook-mcp': {
+            command: 'npx',
+            args: ['tsx', '/app/outlook-mcp/index.ts'],
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

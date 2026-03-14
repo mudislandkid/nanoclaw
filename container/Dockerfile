@@ -45,6 +45,9 @@ RUN npm install
 # Copy source code
 COPY agent-runner/ ./
 
+# Copy optional MCP servers (share node_modules with agent-runner)
+COPY outlook-mcp/ ./outlook-mcp/
+
 # Build TypeScript
 RUN npm run build
 

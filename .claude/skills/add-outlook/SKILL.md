@@ -105,20 +105,20 @@ Wait for `OUTLOOK_AUTH_OK=true`. If it fails, check the error and retry.
 The email address is needed for the JID. Read it from the Graph API:
 
 ```bash
-npx tsx -e "
+node -e "
   const fs = require('fs');
   const path = require('path');
   const os = require('os');
   const tokens = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.outlook-mcp', 'tokens.json'), 'utf-8'));
-  const resp = await fetch('https://graph.microsoft.com/v1.0/me', {
+  fetch('https://graph.microsoft.com/v1.0/me', {
     headers: { Authorization: 'Bearer ' + tokens.accessToken }
-  });
-  const data = await resp.json();
-  console.log(data.mail || data.userPrincipalName);
+  }).then(r => r.json()).then(data => console.log(data.mail || data.userPrincipalName));
 "
 ```
 
 ### Register the group
+
+The register step requires a `--trigger` value even with `--no-trigger-required`:
 
 ```bash
 npx tsx setup/index.ts --step register \
@@ -126,26 +126,95 @@ npx tsx setup/index.ts --step register \
   --name "Outlook Inbox" \
   --folder outlook_inbox \
   --channel outlook \
+  --trigger "none" \
   --no-trigger-required
 ```
 
 ### Add mount to allowlist
 
-Add `~/.outlook-mcp` to the mount allowlist so the container can access credentials:
+Add `~/.outlook-mcp` to the mount allowlist so the container can access credentials.
+
+**IMPORTANT:** Entries in `allowedRoots` must be objects with `{ path, allowReadWrite, description }` — NOT plain strings. Plain strings will silently fail validation.
+
+Edit `~/.config/nanoclaw/mount-allowlist.json` and add this to the `allowedRoots` array:
+
+```json
+{
+  "path": "~/.outlook-mcp",
+  "allowReadWrite": false,
+  "description": "Outlook OAuth credentials"
+}
+```
+
+If the file doesn't exist yet, create it:
+
+```json
+{
+  "allowedRoots": [
+    {
+      "path": "~/.outlook-mcp",
+      "allowReadWrite": false,
+      "description": "Outlook OAuth credentials"
+    }
+  ],
+  "blockedPatterns": [],
+  "nonMainReadOnly": true
+}
+```
+
+### Add container mount to outlook_inbox group
+
+Update the group's `container_config` in the database. The `containerPath` must be **relative** (e.g. `outlook-mcp`), NOT absolute — it gets auto-prefixed with `/workspace/extra/`.
 
 ```bash
-npx tsx setup/index.ts --step mounts -- --add-root "~/.outlook-mcp"
+node -e "
+const Database = require('better-sqlite3');
+const db = new Database('store/messages.db');
+const row = db.prepare('SELECT container_config FROM registered_groups WHERE folder = ?').get('outlook_inbox');
+const config = row?.container_config ? JSON.parse(row.container_config) : {};
+config.additionalMounts = config.additionalMounts || [];
+if (!config.additionalMounts.some(m => m.containerPath === 'outlook-mcp')) {
+  config.additionalMounts.push({ hostPath: process.env.HOME + '/.outlook-mcp', containerPath: 'outlook-mcp', readonly: true });
+  db.prepare('UPDATE registered_groups SET container_config = ? WHERE folder = ?').run(JSON.stringify(config), 'outlook_inbox');
+  console.log('Added outlook-mcp mount to outlook_inbox');
+}
+db.close();
+"
 ```
 
-If the mounts step doesn't support `--add-root`, manually edit `~/.config/nanoclaw/mount-allowlist.json` and add `~/.outlook-mcp` (expanded to the full path) to the `allowedRoots` array.
+### Add container mount to main group (Signal/WhatsApp)
 
-### Add container mount
+The user chats with Andy on their main channel (Signal, WhatsApp, etc.), so the **main group's container also needs the Outlook MCP mount** — otherwise the agent can only triage incoming emails but can't respond to direct requests like "check my inbox".
 
-Ensure the group's container config mounts the credentials directory. Add to the group's configuration (or modify `src/container-runner.ts` if using global mounts):
+Find the main group folder and add the same mount:
 
-The Outlook channel's `additionalMounts` should include:
+```bash
+node -e "
+const Database = require('better-sqlite3');
+const db = new Database('store/messages.db');
+const rows = db.prepare('SELECT folder, container_config FROM registered_groups WHERE is_main = 1 OR folder LIKE \"%main%\"').all();
+for (const row of rows) {
+  const config = row.container_config ? JSON.parse(row.container_config) : {};
+  config.additionalMounts = config.additionalMounts || [];
+  if (!config.additionalMounts.some(m => m.containerPath === 'outlook-mcp')) {
+    config.additionalMounts.push({ hostPath: process.env.HOME + '/.outlook-mcp', containerPath: 'outlook-mcp', readonly: true });
+    db.prepare('UPDATE registered_groups SET container_config = ? WHERE folder = ?').run(JSON.stringify(config), row.folder);
+    console.log('Added outlook-mcp mount to', row.folder);
+  }
+}
+db.close();
+"
 ```
-~/.outlook-mcp:/workspace/extra/outlook-mcp:ro
+
+### Delete stale agent-runner copies
+
+The container runner caches a copy of `agent-runner/src/` per group. After adding MCP server support, delete stale copies so the container gets the updated code:
+
+```bash
+rm -rf data/sessions/outlook_inbox/agent-runner-src/
+rm -rf data/sessions/signal_main/agent-runner-src/
+# Delete for any other group that should have Outlook access:
+# rm -rf data/sessions/<group_folder>/agent-runner-src/
 ```
 
 ## Phase 6: Group CLAUDE.md
@@ -222,6 +291,8 @@ Look for:
 
 Wait for a new email to arrive (or send yourself a test email). The agent should triage it and notify on Signal if it's important.
 
+You can also message Andy on your main channel (Signal) and ask him to check your inbox — the Outlook MCP tools should be available there too.
+
 ## Troubleshooting
 
 **"Outlook: not configured"**: Ensure `~/.outlook-mcp/tokens.json` exists with valid tokens. Re-run Phase 4 if needed.
@@ -232,4 +303,10 @@ Wait for a new email to arrive (or send yourself a test email). The agent should
 
 **No notifications on Signal**: Check that the group is registered (`npx tsx setup/index.ts --step verify`). Check the agent's CLAUDE.md in `groups/outlook_inbox/` for triage instructions.
 
-**Container MCP tools not working**: Ensure `~/.outlook-mcp` is in the mount allowlist and the container config includes the mount. Check container logs in `groups/outlook_inbox/logs/`.
+**Container MCP tools not working — mount issues**:
+- Ensure `allowedRoots` entries in `~/.config/nanoclaw/mount-allowlist.json` are objects (`{ "path": "...", "allowReadWrite": false }`) not plain strings
+- Ensure `containerPath` in the DB `container_config` is **relative** (e.g. `outlook-mcp`), not absolute — it auto-prefixes with `/workspace/extra/`
+- Delete stale agent-runner copies: `rm -rf data/sessions/<group>/agent-runner-src/`
+- Ensure the **main group** also has the mount (not just `outlook_inbox`) — the user talks to Andy on Signal/WhatsApp, so that container needs the MCP tools too
+
+**Outlook container not spinning up**: The `outlook_inbox` container only spins up when new emails arrive. If you're asking Andy to check your mailbox, you're chatting on your main channel (Signal) — the Outlook MCP tools need to be mounted on that group's container instead.
