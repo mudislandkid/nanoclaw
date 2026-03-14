@@ -9,5 +9,8 @@
 
 // telegram
 
+// outlook
+import './outlook.js';
+
 // whatsapp
 import './whatsapp.js';
