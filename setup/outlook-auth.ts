@@ -109,9 +109,9 @@ export async function run(args: string[]): Promise<void> {
           path.join(CREDS_DIR, 'tokens.json'),
           JSON.stringify(
             {
-              access_token: tokens.access_token,
-              refresh_token: tokens.refresh_token,
-              expires_at: Date.now() + tokens.expires_in * 1000,
+              accessToken: tokens.access_token,
+              refreshToken: tokens.refresh_token,
+              expiresAt: Date.now() + tokens.expires_in * 1000,
             },
             null,
             2,
