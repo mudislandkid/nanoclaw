@@ -132,7 +132,7 @@ export class OutlookChannel implements Channel {
       const sender = `${OUTLOOK_PREFIX}${senderAddress}`;
 
       // Always call onChatMetadata for chat discovery
-      this.opts.onChatMetadata(chatJid, email.receivedDateTime, undefined, 'outlook', false);
+      this.opts.onChatMetadata(chatJid, email.receivedDateTime, 'Outlook Inbox', 'outlook', false);
 
       // Only deliver full message if the chat is registered
       if (!groups[chatJid]) {

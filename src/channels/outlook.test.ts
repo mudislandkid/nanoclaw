@@ -285,7 +285,7 @@ describe('OutlookChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'outlook:user@outlook.com',
         expect.any(String),
-        undefined,
+        'Outlook Inbox',
         'outlook',
         false,
       );
