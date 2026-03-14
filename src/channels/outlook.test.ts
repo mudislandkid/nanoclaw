@@ -92,16 +92,6 @@ function makeEmail(overrides?: Record<string, unknown>) {
   };
 }
 
-/**
- * Connect a channel, consuming any initial poll triggered by connect(),
- * so subsequent test-specific mocks are applied to the next poll call.
- */
-async function connectAndDrain(channel: OutlookChannel): Promise<void> {
-  await channel.connect();
-  // Allow the fire-and-forget initial poll promise to settle
-  await new Promise((r) => setTimeout(r, 10));
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
