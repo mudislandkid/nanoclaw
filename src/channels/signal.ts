@@ -106,15 +106,19 @@ export class SignalChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    const rawPhone = jidToPhone(jid);
-    // In primary device mode, the registered JID is the bot's own number.
-    // Route DM replies to the owner's phone number instead.
-    const phone =
-      rawPhone === this.botPhone && this.userPhone ? this.userPhone : rawPhone;
+    const rawId = jidToPhone(jid);
+    // For group JIDs, pass the group ID directly to the SDK (it auto-detects).
+    // For DMs, route to the owner's phone in primary device mode.
+    const isGroup = this.isGroupId(rawId);
+    const recipient = isGroup
+      ? rawId
+      : rawId === this.botPhone && this.userPhone
+        ? this.userPhone
+        : rawId;
     const prefixed = `${ASSISTANT_NAME}: ${text}`;
 
     if (!this.connected) {
-      this.outgoingQueue.push({ phone, text: prefixed });
+      this.outgoingQueue.push({ phone: recipient, text: prefixed });
       logger.info(
         { jid, queueSize: this.outgoingQueue.length },
         'Signal: disconnected, message queued',
@@ -123,13 +127,13 @@ export class SignalChannel implements Channel {
     }
 
     try {
-      await this.signal.sendMessage(phone, prefixed);
+      await this.signal.sendMessage(recipient, prefixed);
       logger.info(
-        { jid, phone, length: prefixed.length },
+        { jid, recipient, isGroup, length: prefixed.length },
         'Signal: message sent',
       );
     } catch (err) {
-      this.outgoingQueue.push({ phone, text: prefixed });
+      this.outgoingQueue.push({ phone: recipient, text: prefixed });
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },
         'Signal: send failed, message queued',
@@ -156,6 +160,18 @@ export class SignalChannel implements Channel {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Check if a raw ID (after stripping signal: prefix) is a Signal group ID.
+   * Signal group IDs are base64-encoded and contain =, /, or non-leading +.
+   */
+  private isGroupId(id: string): boolean {
+    return (
+      id.includes('=') ||
+      id.includes('/') ||
+      (id.includes('+') && !id.startsWith('+'))
+    );
+  }
 
   private async handleMessage(params: unknown): Promise<void> {
     const p = params as Record<string, unknown>;
@@ -203,10 +219,16 @@ export class SignalChannel implements Channel {
         typeof text === 'string' && text.startsWith(`${ASSISTANT_NAME}:`);
       isFromMe = !isBotMessage;
     } else if (dataMsg) {
-      // In primary device mode, DMs arrive as dataMessages.
-      // Use the bot's own number as chatPhone — the registered JID matches this.
-      // Replies are routed to SIGNAL_OWNER_PHONE via sendMessage().
-      chatPhone = this.botPhone;
+      const groupInfo = dataMsg.groupInfo as Record<string, unknown> | undefined;
+      if (groupInfo?.groupId) {
+        // Group message — use group ID as the chat identifier
+        chatPhone = groupInfo.groupId as string;
+      } else {
+        // DM — In primary device mode, DMs arrive as dataMessages.
+        // Use the bot's own number as chatPhone — the registered JID matches this.
+        // Replies are routed to SIGNAL_OWNER_PHONE via sendMessage().
+        chatPhone = this.botPhone;
+      }
       text = dataMsg.message as string | undefined;
       attachments = (dataMsg.attachments as unknown[]) ?? [];
       isFromMe = false;
@@ -231,7 +253,8 @@ export class SignalChannel implements Channel {
     const chatJid = phoneToJid(chatPhone);
 
     // Always emit metadata for chat discovery
-    this.opts.onChatMetadata(chatJid, timestamp, sourceName, 'signal', false);
+    const isGroup = this.isGroupId(jidToPhone(chatJid));
+    this.opts.onChatMetadata(chatJid, timestamp, sourceName, 'signal', isGroup);
 
     // Only deliver full message to registered groups
     const groups = this.opts.registeredGroups();
