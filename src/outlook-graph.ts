@@ -51,7 +51,10 @@ export interface DeltaResult {
 export function loadOutlookCredentials(): OutlookCredentials | null {
   try {
     if (!fs.existsSync(CREDS_DIR)) {
-      logger.debug({ dir: CREDS_DIR }, 'Outlook credentials directory not found');
+      logger.debug(
+        { dir: CREDS_DIR },
+        'Outlook credentials directory not found',
+      );
       return null;
     }
 
@@ -72,7 +75,12 @@ export function loadOutlookCredentials(): OutlookCredentials | null {
     const clientSecret = fs.readFileSync(clientSecretFile, 'utf-8').trim();
     const tokens = JSON.parse(fs.readFileSync(tokensFile, 'utf-8'));
 
-    if (!clientId || !clientSecret || !tokens.accessToken || !tokens.refreshToken) {
+    if (
+      !clientId ||
+      !clientSecret ||
+      !tokens.accessToken ||
+      !tokens.refreshToken
+    ) {
       logger.warn('Outlook credentials file missing required fields');
       return null;
     }
@@ -101,7 +109,11 @@ export function saveTokens(
   const expiresAt = Date.now() + expiresIn * 1000;
   const data = { accessToken, refreshToken, expiresAt };
   fs.mkdirSync(CREDS_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(CREDS_DIR, 'tokens.json'), JSON.stringify(data, null, 2), { mode: 0o600 });
+  fs.writeFileSync(
+    path.join(CREDS_DIR, 'tokens.json'),
+    JSON.stringify(data, null, 2),
+    { mode: 0o600 },
+  );
   logger.debug({ expiresAt }, 'Outlook tokens saved');
 }
 
@@ -119,7 +131,10 @@ export async function refreshAccessToken(
 ): Promise<OutlookCredentials> {
   const timeLeft = creds.expiresAt - Date.now();
   if (timeLeft > REFRESH_THRESHOLD_MS) {
-    logger.debug({ timeLeftMs: timeLeft }, 'Outlook token still valid, skipping refresh');
+    logger.debug(
+      { timeLeftMs: timeLeft },
+      'Outlook token still valid, skipping refresh',
+    );
     return creds;
   }
 
@@ -155,7 +170,8 @@ export async function refreshAccessToken(
   }
 
   const accessToken = data.access_token as string;
-  const refreshToken = (data.refresh_token as string | undefined) ?? creds.refreshToken;
+  const refreshToken =
+    (data.refresh_token as string | undefined) ?? creds.refreshToken;
   const expiresIn = (data.expires_in as number | undefined) ?? 3600;
 
   saveTokens(accessToken, refreshToken, expiresIn);
@@ -195,7 +211,10 @@ export async function fetchDelta(
 
   while (nextUrl) {
     if (pageCount >= MAX_PAGES) {
-      logger.warn({ pageCount }, 'fetchDelta: MAX_PAGES limit reached, stopping pagination');
+      logger.warn(
+        { pageCount },
+        'fetchDelta: MAX_PAGES limit reached, stopping pagination',
+      );
       break;
     }
     pageCount++;
@@ -254,7 +273,9 @@ export async function markAsRead(
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`markAsRead failed for ${messageId} (${res.status}): ${body}`);
+    throw new Error(
+      `markAsRead failed for ${messageId} (${res.status}): ${body}`,
+    );
   }
 }
 
@@ -275,11 +296,16 @@ export async function getUserEmail(accessToken: string): Promise<string> {
     throw new Error(`getUserEmail failed (${res.status}): ${body}`);
   }
 
-  const data = (await res.json()) as { mail?: string; userPrincipalName?: string };
+  const data = (await res.json()) as {
+    mail?: string;
+    userPrincipalName?: string;
+  };
   const email = data.mail ?? data.userPrincipalName;
 
   if (!email) {
-    throw new Error('Graph /me response missing mail and userPrincipalName fields');
+    throw new Error(
+      'Graph /me response missing mail and userPrincipalName fields',
+    );
   }
 
   return email;

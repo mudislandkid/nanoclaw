@@ -221,7 +221,9 @@ export class SignalChannel implements Channel {
         typeof text === 'string' && text.startsWith(`${ASSISTANT_NAME}:`);
       isFromMe = !isBotMessage;
     } else if (dataMsg) {
-      const groupInfo = dataMsg.groupInfo as Record<string, unknown> | undefined;
+      const groupInfo = dataMsg.groupInfo as
+        | Record<string, unknown>
+        | undefined;
       if (groupInfo?.groupId) {
         // Group message — use group ID as the chat identifier
         chatPhone = groupInfo.groupId as string;

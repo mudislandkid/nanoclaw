@@ -61,7 +61,9 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeCreds(overrides: Partial<OutlookCredentials> = {}): OutlookCredentials {
+function makeCreds(
+  overrides: Partial<OutlookCredentials> = {},
+): OutlookCredentials {
   return {
     clientId: 'test-client-id',
     clientSecret: 'test-client-secret',
@@ -174,10 +176,17 @@ describe('saveTokens', () => {
 
     saveTokens('new-access', 'new-refresh', 3600);
 
-    expect(mockFs.mkdirSync).toHaveBeenCalledWith(CREDS_DIR, { recursive: true, mode: 0o700 });
+    expect(mockFs.mkdirSync).toHaveBeenCalledWith(CREDS_DIR, {
+      recursive: true,
+      mode: 0o700,
+    });
     expect(mockFs.writeFileSync).toHaveBeenCalledOnce();
 
-    const [, written] = mockFs.writeFileSync.mock.calls[0] as [string, string, unknown];
+    const [, written] = mockFs.writeFileSync.mock.calls[0] as [
+      string,
+      string,
+      unknown,
+    ];
     expect(mockFs.writeFileSync.mock.calls[0][2]).toEqual({ mode: 0o600 });
     const parsed = JSON.parse(written);
     expect(parsed.accessToken).toBe('new-access');
@@ -267,7 +276,9 @@ describe('refreshAccessToken', () => {
       mockFetchResponse({ error: 'server_error' }, 500),
     );
 
-    await expect(refreshAccessToken(creds)).rejects.toThrow(/token refresh failed/i);
+    await expect(refreshAccessToken(creds)).rejects.toThrow(
+      /token refresh failed/i,
+    );
   });
 
   it('preserves existing refresh token when response omits it', async () => {
@@ -306,7 +317,8 @@ describe('fetchDelta', () => {
   });
 
   it('uses the provided deltaLink when given', async () => {
-    const myDeltaLink = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=abc';
+    const myDeltaLink =
+      'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=abc';
 
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       mockFetchResponse({
@@ -330,7 +342,9 @@ describe('fetchDelta', () => {
           {
             id: 'msg-read',
             subject: 'Read email',
-            from: { emailAddress: { name: 'Alice', address: 'alice@example.com' } },
+            from: {
+              emailAddress: { name: 'Alice', address: 'alice@example.com' },
+            },
             bodyPreview: 'already read',
             receivedDateTime: '2024-01-01T10:00:00Z',
             isRead: true,
@@ -379,8 +393,10 @@ describe('fetchDelta', () => {
   });
 
   it('follows @odata.nextLink for pagination', async () => {
-    const page1NextLink = 'https://graph.microsoft.com/v1.0/me/messages?$skip=10';
-    const finalDeltaLink = 'https://graph.microsoft.com/v1.0/me/messages?$deltatoken=end';
+    const page1NextLink =
+      'https://graph.microsoft.com/v1.0/me/messages?$skip=10';
+    const finalDeltaLink =
+      'https://graph.microsoft.com/v1.0/me/messages?$deltatoken=end';
 
     (fetch as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(
@@ -423,7 +439,9 @@ describe('fetchDelta', () => {
     expect(result.deltaLink).toBe(finalDeltaLink);
 
     // Second call uses the nextLink
-    const [secondUrl] = (fetch as ReturnType<typeof vi.fn>).mock.calls[1] as [string];
+    const [secondUrl] = (fetch as ReturnType<typeof vi.fn>).mock.calls[1] as [
+      string,
+    ];
     expect(secondUrl).toBe(page1NextLink);
   });
 
@@ -491,7 +509,9 @@ describe('markAsRead', () => {
       text: vi.fn().mockResolvedValue('Not Found'),
     });
 
-    await expect(markAsRead('token', 'bad-id')).rejects.toThrow(/markAsRead.*404/);
+    await expect(markAsRead('token', 'bad-id')).rejects.toThrow(
+      /markAsRead.*404/,
+    );
   });
 });
 
@@ -502,7 +522,10 @@ describe('markAsRead', () => {
 describe('getUserEmail', () => {
   it('extracts email from mail field', async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      mockFetchResponse({ mail: 'user@example.com', userPrincipalName: 'user@tenant.com' }),
+      mockFetchResponse({
+        mail: 'user@example.com',
+        userPrincipalName: 'user@tenant.com',
+      }),
     );
 
     const email = await getUserEmail('token');
@@ -525,7 +548,9 @@ describe('getUserEmail', () => {
       mockFetchResponse({ displayName: 'No Email User' }),
     );
 
-    await expect(getUserEmail('token')).rejects.toThrow(/mail.*userPrincipalName/i);
+    await expect(getUserEmail('token')).rejects.toThrow(
+      /mail.*userPrincipalName/i,
+    );
   });
 
   it('sends Authorization header and hits /me endpoint', async () => {

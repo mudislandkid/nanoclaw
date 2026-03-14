@@ -27,7 +27,10 @@ vi.mock('../outlook-graph.js', () => ({
     expiresAt: Date.now() + 3_600_000,
   })),
   refreshAccessToken: vi.fn(async (creds) => creds),
-  fetchDelta: vi.fn(async () => ({ emails: [], deltaLink: 'https://delta.link/1' })),
+  fetchDelta: vi.fn(async () => ({
+    emails: [],
+    deltaLink: 'https://delta.link/1',
+  })),
   markAsRead: vi.fn(async () => undefined),
   getUserEmail: vi.fn(async () => 'user@outlook.com'),
 }));
@@ -49,7 +52,9 @@ import { RegisteredGroup } from '../types.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeCredentials(overrides?: Partial<OutlookCredentials>): OutlookCredentials {
+function makeCredentials(
+  overrides?: Partial<OutlookCredentials>,
+): OutlookCredentials {
   return {
     clientId: 'test-client-id',
     clientSecret: 'test-client-secret',
@@ -70,7 +75,9 @@ function makeOpts(overrides?: Partial<ChannelOpts>): ChannelOpts {
   return {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
-    registeredGroups: vi.fn(() => ({ 'outlook:user@outlook.com': defaultGroup })),
+    registeredGroups: vi.fn(() => ({
+      'outlook:user@outlook.com': defaultGroup,
+    })),
     ...overrides,
   };
 }
@@ -101,7 +108,10 @@ describe('OutlookChannel', () => {
     vi.clearAllMocks();
     vi.mocked(getUserEmail).mockResolvedValue('user@outlook.com');
     vi.mocked(refreshAccessToken).mockImplementation(async (creds) => creds);
-    vi.mocked(fetchDelta).mockResolvedValue({ emails: [], deltaLink: 'https://delta.link/1' });
+    vi.mocked(fetchDelta).mockResolvedValue({
+      emails: [],
+      deltaLink: 'https://delta.link/1',
+    });
     vi.mocked(markAsRead).mockResolvedValue(undefined);
     vi.mocked(getRouterState).mockReturnValue(undefined);
     vi.mocked(setRouterState).mockReturnValue(undefined);

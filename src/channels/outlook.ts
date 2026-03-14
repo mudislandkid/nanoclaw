@@ -41,7 +41,10 @@ export class OutlookChannel implements Channel {
     try {
       this.creds = await refreshAccessToken(this.creds);
     } catch (err) {
-      logger.error({ err }, 'Outlook: token refresh failed during connect — channel disabled');
+      logger.error(
+        { err },
+        'Outlook: token refresh failed during connect — channel disabled',
+      );
       this.connected = false;
       return;
     }
@@ -49,7 +52,10 @@ export class OutlookChannel implements Channel {
     try {
       this.userEmail = await getUserEmail(this.creds.accessToken);
     } catch (err) {
-      logger.error({ err }, 'Outlook: failed to fetch user email — channel disabled');
+      logger.error(
+        { err },
+        'Outlook: failed to fetch user email — channel disabled',
+      );
       this.connected = false;
       return;
     }
@@ -63,9 +69,7 @@ export class OutlookChannel implements Channel {
     );
 
     this.pollTimer = setInterval(() => {
-      this.poll().catch((err) =>
-        logger.error({ err }, 'Outlook: poll failed'),
-      );
+      this.poll().catch((err) => logger.error({ err }, 'Outlook: poll failed'));
     }, POLL_INTERVAL_MS);
   }
 
@@ -102,7 +106,10 @@ export class OutlookChannel implements Channel {
     try {
       this.creds = await refreshAccessToken(this.creds);
     } catch (err) {
-      logger.error({ err }, 'Outlook: token refresh failed — disconnecting channel');
+      logger.error(
+        { err },
+        'Outlook: token refresh failed — disconnecting channel',
+      );
       await this.disconnect();
       return;
     }
@@ -132,7 +139,13 @@ export class OutlookChannel implements Channel {
       const sender = `${OUTLOOK_PREFIX}${senderAddress}`;
 
       // Always call onChatMetadata for chat discovery
-      this.opts.onChatMetadata(chatJid, email.receivedDateTime, 'Outlook Inbox', 'outlook', false);
+      this.opts.onChatMetadata(
+        chatJid,
+        email.receivedDateTime,
+        'Outlook Inbox',
+        'outlook',
+        false,
+      );
 
       // Only deliver full message if the chat is registered
       if (!groups[chatJid]) {
@@ -166,7 +179,10 @@ export class OutlookChannel implements Channel {
         await markAsRead(this.creds.accessToken, email.id);
         logger.debug({ emailId: email.id }, 'Outlook: marked email as read');
       } catch (err) {
-        logger.warn({ err, emailId: email.id }, 'Outlook: failed to mark email as read');
+        logger.warn(
+          { err, emailId: email.id },
+          'Outlook: failed to mark email as read',
+        );
       }
     }
 
