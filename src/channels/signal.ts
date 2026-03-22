@@ -5,7 +5,7 @@ import { SignalCli } from 'signal-sdk';
 
 import os from 'os';
 
-import { ASSISTANT_NAME, STORE_DIR } from '../config.js';
+import { ASSISTANT_NAME } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
 import { processImage } from '../image.js';
@@ -117,10 +117,8 @@ export class SignalChannel implements Channel {
       : rawId === this.botPhone && this.userPhone
         ? this.userPhone
         : rawId;
-    const prefixed = `${ASSISTANT_NAME}: ${text}`;
-
     if (!this.connected) {
-      this.outgoingQueue.push({ phone: recipient, text: prefixed });
+      this.outgoingQueue.push({ phone: recipient, text });
       logger.info(
         { jid, queueSize: this.outgoingQueue.length },
         'Signal: disconnected, message queued',
@@ -129,13 +127,13 @@ export class SignalChannel implements Channel {
     }
 
     try {
-      await this.signal.sendMessage(recipient, prefixed);
+      await this.signal.sendMessage(recipient, text);
       logger.info(
-        { jid, recipient, isGroup, length: prefixed.length },
+        { jid, recipient, isGroup, length: text.length },
         'Signal: message sent',
       );
     } catch (err) {
-      this.outgoingQueue.push({ phone: recipient, text: prefixed });
+      this.outgoingQueue.push({ phone: recipient, text });
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },
         'Signal: send failed, message queued',
@@ -151,9 +149,15 @@ export class SignalChannel implements Channel {
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     try {
-      const phone = jidToPhone(jid);
+      const rawId = jidToPhone(jid);
+      const isGroup = this.isGroupId(rawId);
+      const recipient = isGroup
+        ? rawId
+        : rawId === this.botPhone && this.userPhone
+          ? this.userPhone
+          : rawId;
       // sendTyping(recipient, stop?) — stop is the inverse of isTyping
-      await this.signal.sendTyping(phone, !isTyping);
+      await this.signal.sendTyping(recipient, !isTyping);
     } catch (err) {
       logger.debug({ jid, err }, 'Signal: failed to send typing indicator');
     }

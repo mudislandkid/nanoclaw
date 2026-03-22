@@ -747,7 +747,7 @@ describe('SignalChannel', () => {
 
       expect(fakeSignalCli.sendMessage).toHaveBeenCalledWith(
         '+447700900001',
-        'Andy: Hello world',
+        'Hello world',
       );
     });
 
@@ -762,11 +762,11 @@ describe('SignalChannel', () => {
 
       expect(fakeSignalCli.sendMessage).toHaveBeenCalledWith(
         '+447700900001',
-        'Andy: Direct message',
+        'Direct message',
       );
     });
 
-    it('strips signal: prefix and prepends assistant name before sending', async () => {
+    it('strips signal: prefix before sending', async () => {
       const opts = createTestOpts();
       const channel = new SignalChannel(opts);
       await channel.connect();
@@ -775,7 +775,7 @@ describe('SignalChannel', () => {
 
       expect(fakeSignalCli.sendMessage).toHaveBeenCalledWith(
         '+447700900001',
-        'Andy: Hello world',
+        'Hello world',
       );
     });
 
@@ -819,12 +819,12 @@ describe('SignalChannel', () => {
       expect(fakeSignalCli.sendMessage).toHaveBeenNthCalledWith(
         1,
         '+447700900001',
-        'Andy: First',
+        'First',
       );
       expect(fakeSignalCli.sendMessage).toHaveBeenNthCalledWith(
         2,
         '+447700900001',
-        'Andy: Second',
+        'Second',
       );
     });
 
@@ -839,7 +839,7 @@ describe('SignalChannel', () => {
 
       expect(fakeSignalCli.sendMessage).toHaveBeenCalledWith(
         '+447700900001',
-        'Andy: No prefix',
+        'No prefix',
       );
     });
   });

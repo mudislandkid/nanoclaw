@@ -54,7 +54,9 @@ describe('mount-security: overrideNonMainReadOnly', () => {
 
   it('forces read-only for non-main group when overrideNonMainReadOnly is not set', async () => {
     const allowlist = {
-      allowedRoots: [{ path: testDir, allowReadWrite: true, description: 'No override' }],
+      allowedRoots: [
+        { path: testDir, allowReadWrite: true, description: 'No override' },
+      ],
       blockedPatterns: [],
       nonMainReadOnly: true,
     };
