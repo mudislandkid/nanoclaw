@@ -23,6 +23,9 @@ export interface AllowedRoot {
   path: string;
   // Whether read-write mounts are allowed under this root
   allowReadWrite: boolean;
+  // If true, bypasses the global nonMainReadOnly setting for this root,
+  // allowing non-main groups to mount read-write (e.g., shared vault directories)
+  overrideNonMainReadOnly?: boolean;
   // Optional description for documentation
   description?: string;
 }
