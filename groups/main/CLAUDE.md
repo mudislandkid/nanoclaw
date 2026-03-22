@@ -244,3 +244,10 @@ When scheduling tasks for other groups, use the `target_group_jid` parameter wit
 - `schedule_task(prompt: "...", schedule_type: "cron", schedule_value: "0 9 * * 1", target_group_jid: "120363336345536173@g.us")`
 
 The task will run in that group's context with access to their files and memory.
+
+## Second Brain
+
+You have read-write access to an Obsidian vault at `/workspace/extra/second-brain/`.
+See its CLAUDE.md for capture rules, frontmatter schema, and filing conventions.
+Use it to capture noteworthy ideas, decisions, tasks, and knowledge from conversations.
+Check it for relevant context before responding to topics that might have prior history.

@@ -56,3 +56,10 @@ NEVER use markdown. Only use WhatsApp/Telegram formatting:
 - ```triple backticks``` for code
 
 No ## headings. No [links](url). No **double stars**.
+
+## Second Brain
+
+You have read-write access to an Obsidian vault at `/workspace/extra/second-brain/`.
+See its CLAUDE.md for capture rules, frontmatter schema, and filing conventions.
+Use it to capture noteworthy ideas, decisions, tasks, and knowledge from conversations.
+Check it for relevant context before responding to topics that might have prior history.
