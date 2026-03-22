@@ -128,7 +128,7 @@ describe('OutlookChannel', () => {
   describe('connect()', () => {
     it('calls getUserEmail and sets connected = true', async () => {
       const opts = makeOpts();
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
 
       await channel.connect();
 
@@ -144,7 +144,7 @@ describe('OutlookChannel', () => {
       );
 
       const opts = makeOpts();
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
 
       await channel.connect();
 
@@ -157,7 +157,7 @@ describe('OutlookChannel', () => {
       vi.mocked(getUserEmail).mockRejectedValueOnce(new Error('Network error'));
 
       const opts = makeOpts();
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
 
       await channel.connect();
 
@@ -174,7 +174,7 @@ describe('OutlookChannel', () => {
       vi.useFakeTimers();
 
       const opts = makeOpts();
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
 
       // connect() is async — run it with fake timers
       const connectPromise = channel.connect();
@@ -203,12 +203,12 @@ describe('OutlookChannel', () => {
 
   describe('ownsJid()', () => {
     it('returns true for outlook: JIDs', () => {
-      const channel = new OutlookChannel(makeOpts(), makeCredentials());
+      const channel = new OutlookChannel(makeOpts(), makeCredentials(), null);
       expect(channel.ownsJid('outlook:foo@bar.com')).toBe(true);
     });
 
     it('returns false for non-outlook JIDs', () => {
-      const channel = new OutlookChannel(makeOpts(), makeCredentials());
+      const channel = new OutlookChannel(makeOpts(), makeCredentials(), null);
       expect(channel.ownsJid('signal:+15551234567')).toBe(false);
       expect(channel.ownsJid('12345@g.us')).toBe(false);
       expect(channel.ownsJid('tg:123456')).toBe(false);
@@ -221,7 +221,7 @@ describe('OutlookChannel', () => {
 
   describe('sendMessage()', () => {
     it('is a no-op and does not throw', async () => {
-      const channel = new OutlookChannel(makeOpts(), makeCredentials());
+      const channel = new OutlookChannel(makeOpts(), makeCredentials(), null);
       await expect(
         channel.sendMessage('outlook:user@outlook.com', 'Hello'),
       ).resolves.toBeUndefined();
@@ -241,7 +241,7 @@ describe('OutlookChannel', () => {
       });
 
       const opts = makeOpts();
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
 
       // Set userEmail directly so we can skip connect() and its side-effects
       (channel as any).userEmail = 'user@outlook.com';
@@ -254,7 +254,7 @@ describe('OutlookChannel', () => {
           id: `outlook-${email.id}`,
           chat_jid: 'outlook:user@outlook.com',
           sender: 'outlook:john@example.com',
-          sender_name: 'John Smith',
+          sender_name: 'Email: John Smith',
           timestamp: email.receivedDateTime,
           is_from_me: false,
           is_bot_message: false,
@@ -276,7 +276,7 @@ describe('OutlookChannel', () => {
       });
 
       const opts = makeOpts();
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
       (channel as any).userEmail = 'user@outlook.com';
 
       await (channel as any).poll();
@@ -299,7 +299,7 @@ describe('OutlookChannel', () => {
         deltaLink: 'https://delta.link/2',
       });
 
-      const channel = new OutlookChannel(makeOpts(), makeCredentials());
+      const channel = new OutlookChannel(makeOpts(), makeCredentials(), null);
       (channel as any).userEmail = 'user@outlook.com';
 
       await (channel as any).poll();
@@ -314,7 +314,7 @@ describe('OutlookChannel', () => {
         deltaLink: 'https://delta.link/new',
       });
 
-      const channel = new OutlookChannel(makeOpts(), makeCredentials());
+      const channel = new OutlookChannel(makeOpts(), makeCredentials(), null);
       (channel as any).userEmail = 'user@outlook.com';
 
       await (channel as any).poll();
@@ -336,7 +336,7 @@ describe('OutlookChannel', () => {
         registeredGroups: vi.fn(() => ({})),
       });
 
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
       (channel as any).userEmail = 'user@outlook.com';
 
       await (channel as any).poll();
@@ -356,7 +356,7 @@ describe('OutlookChannel', () => {
         registeredGroups: vi.fn(() => ({})),
       });
 
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
       (channel as any).userEmail = 'user@outlook.com';
 
       await (channel as any).poll();
@@ -373,7 +373,7 @@ describe('OutlookChannel', () => {
     it('disconnects the channel when token refresh fails during poll', async () => {
       // connect() uses its own refresh (pass-through), poll() will fail on next refresh
       const opts = makeOpts();
-      const channel = new OutlookChannel(opts, makeCredentials());
+      const channel = new OutlookChannel(opts, makeCredentials(), null);
 
       // Manually set connected and userEmail to simulate a connected state
       (channel as any).connected = true;

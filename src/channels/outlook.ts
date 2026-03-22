@@ -1,4 +1,5 @@
 import { getRouterState, setRouterState } from '../db.js';
+import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import {
   fetchDelta,
@@ -31,10 +32,17 @@ export class OutlookChannel implements Channel {
   private pollTimer: NodeJS.Timeout | null = null;
   private creds: OutlookCredentials;
   private userEmail = '';
+  /** When set, emails are delivered to this JID instead of the outlook JID. */
+  private deliverToJid: string | null;
 
-  constructor(opts: ChannelOpts, creds: OutlookCredentials) {
+  constructor(
+    opts: ChannelOpts,
+    creds: OutlookCredentials,
+    deliverToJid: string | null,
+  ) {
     this.opts = opts;
     this.creds = creds;
+    this.deliverToJid = deliverToJid;
   }
 
   async connect(): Promise<void> {
@@ -130,7 +138,8 @@ export class OutlookChannel implements Channel {
       logger.info({ count: emails.length }, 'Outlook: processing new emails');
     }
 
-    const chatJid = `${OUTLOOK_PREFIX}${this.userEmail}`;
+    const outlookJid = `${OUTLOOK_PREFIX}${this.userEmail}`;
+    const targetJid = this.deliverToJid ?? outlookJid;
     const groups = this.opts.registeredGroups();
 
     for (const email of emails) {
@@ -138,40 +147,40 @@ export class OutlookChannel implements Channel {
       const senderName = email.from?.emailAddress?.name ?? senderAddress;
       const sender = `${OUTLOOK_PREFIX}${senderAddress}`;
 
-      // Always call onChatMetadata for chat discovery
+      // Always call onChatMetadata for chat discovery (use outlook JID)
       this.opts.onChatMetadata(
-        chatJid,
+        outlookJid,
         email.receivedDateTime,
         'Outlook Inbox',
         'outlook',
         false,
       );
 
-      // Only deliver full message if the chat is registered
-      if (!groups[chatJid]) {
+      // Deliver to the target group (may be a different channel, e.g. Signal)
+      if (!groups[targetJid]) {
         logger.debug(
-          { chatJid },
-          'Outlook: email received for unregistered chat, skipping message delivery',
+          { targetJid },
+          'Outlook: target group not registered, skipping message delivery',
         );
       } else {
         const content =
-          `New email from "${senderName} <${senderAddress}>"\n` +
+          `[EMAIL] From: ${senderName} <${senderAddress}>\n` +
           `Subject: ${email.subject ?? '(no subject)'}\n` +
           `Preview: ${email.bodyPreview ?? ''}\n` +
           `[Email ID: ${email.id}]`;
 
         const message: NewMessage = {
           id: `outlook-${email.id}`,
-          chat_jid: chatJid,
+          chat_jid: targetJid,
           sender,
-          sender_name: senderName,
+          sender_name: `Email: ${senderName}`,
           content,
           timestamp: email.receivedDateTime,
           is_from_me: false,
           is_bot_message: false,
         };
 
-        this.opts.onMessage(chatJid, message);
+        this.opts.onMessage(targetJid, message);
       }
 
       // Mark as read regardless of registration to prevent re-processing
@@ -203,5 +212,14 @@ registerChannel('outlook', (opts: ChannelOpts) => {
     logger.warn('Outlook: not configured. Run /add-outlook to set up.');
     return null;
   }
-  return new OutlookChannel(opts, creds);
+  const env = readEnvFile(['OUTLOOK_DELIVER_TO']);
+  const deliverTo =
+    process.env.OUTLOOK_DELIVER_TO || env.OUTLOOK_DELIVER_TO || null;
+  if (deliverTo) {
+    logger.info(
+      { deliverTo },
+      'Outlook: emails will be delivered to alternate group',
+    );
+  }
+  return new OutlookChannel(opts, creds, deliverTo);
 });
