@@ -176,20 +176,24 @@ Used by the `/add-second-brain` skill during setup to resolve the vault location
 
 ### Mount Allowlist
 
-The resolved path must be added to `~/.config/nanoclaw/mount-allowlist.json` with `readWrite: true`. By default, NanoClaw's allowlist enforces `nonMainReadOnly: true` for non-main groups. Since all groups need write access to the vault, the allowlist entry must explicitly allow read-write:
+The resolved path must be added to `~/.config/nanoclaw/mount-allowlist.json`. By default, NanoClaw's allowlist enforces `nonMainReadOnly: true` for non-main groups. Since all groups need write access to the vault, the allowlist entry needs `allowReadWrite: true` and `overrideNonMainReadOnly: true` (a new field added by this implementation):
 
 ```json
 {
-  "allowedPaths": [
+  "allowedRoots": [
     {
-      "path": "/Users/greg/SecondBrain",
-      "readWrite": true
+      "path": "~/SecondBrain",
+      "allowReadWrite": true,
+      "overrideNonMainReadOnly": true,
+      "description": "Obsidian second brain vault"
     }
-  ]
+  ],
+  "blockedPatterns": [],
+  "nonMainReadOnly": true
 }
 ```
 
-This overrides `nonMainReadOnly` for this specific path, ensuring all groups can capture to the vault.
+The `overrideNonMainReadOnly` field on the `AllowedRoot` interface bypasses the global `nonMainReadOnly` setting for this specific root, ensuring all groups can capture to the vault.
 
 ### Vault Must Exist Before Mount Registration
 
