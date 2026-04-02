@@ -13,10 +13,7 @@ import { logger } from '../logger.js';
 import { transcribeAudioFile } from '../transcription.js';
 import { Channel, NewMessage } from '../types.js';
 import { ChannelOpts, registerChannel } from './registry.js';
-import {
-  GroupBackoffConfig,
-  GroupBackoffManager,
-} from '../group-backoff.js';
+import { GroupBackoffConfig, GroupBackoffManager } from '../group-backoff.js';
 
 const SIGNAL_PREFIX = 'signal:';
 
@@ -126,11 +123,15 @@ function getBackoffConfig(): GroupBackoffConfig {
       10,
     ),
     typingTimeoutMs: parseInt(
-      process.env.GROUP_TYPING_TIMEOUT_MS || env.GROUP_TYPING_TIMEOUT_MS || '90000',
+      process.env.GROUP_TYPING_TIMEOUT_MS ||
+        env.GROUP_TYPING_TIMEOUT_MS ||
+        '90000',
       10,
     ),
     typingStopGraceMs: parseInt(
-      process.env.GROUP_TYPING_STOP_GRACE_MS || env.GROUP_TYPING_STOP_GRACE_MS || '3000',
+      process.env.GROUP_TYPING_STOP_GRACE_MS ||
+        env.GROUP_TYPING_STOP_GRACE_MS ||
+        '3000',
       10,
     ),
   };
@@ -140,7 +141,25 @@ function getKnownBots(): Set<string> {
   const env = readEnvFile(['SIGNAL_KNOWN_BOTS']);
   const raw = process.env.SIGNAL_KNOWN_BOTS || env.SIGNAL_KNOWN_BOTS || '';
   if (!raw) return new Set();
-  return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+  return new Set(
+    raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
+function getKnownBotNames(): Set<string> {
+  const env = readEnvFile(['SIGNAL_KNOWN_BOT_NAMES']);
+  const raw =
+    process.env.SIGNAL_KNOWN_BOT_NAMES || env.SIGNAL_KNOWN_BOT_NAMES || '';
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
 }
 
 /**
@@ -171,6 +190,7 @@ export class SignalChannel implements Channel {
   private flushing = false;
   private opts: ChannelOpts;
   private knownBots: Set<string>;
+  private knownBotNames: Set<string>;
   private backoffManager: GroupBackoffManager;
 
   constructor(opts: ChannelOpts) {
@@ -179,6 +199,7 @@ export class SignalChannel implements Channel {
     this.botPhone = env.botPhone;
     this.userPhone = env.userPhone;
     this.knownBots = getKnownBots();
+    this.knownBotNames = getKnownBotNames();
     this.backoffManager = new GroupBackoffManager(
       getBackoffConfig(),
       (groupJid, messages) => {
@@ -338,8 +359,10 @@ export class SignalChannel implements Channel {
     );
   }
 
-  private isKnownBot(phone: string): boolean {
-    return this.knownBots.has(phone);
+  private isKnownBot(phone: string, name?: string): boolean {
+    if (this.knownBots.has(phone)) return true;
+    if (name && this.knownBotNames.has(name.toLowerCase())) return true;
+    return false;
   }
 
   private async handleMessage(params: unknown): Promise<void> {
@@ -361,7 +384,7 @@ export class SignalChannel implements Channel {
     if (typingMsg) {
       const action = typingMsg.action as string; // "STARTED" or "STOPPED"
       const groupId = typingMsg.groupId as string | undefined;
-      if (groupId && this.isKnownBot(source)) {
+      if (groupId && this.isKnownBot(source, sourceName)) {
         this.backoffManager.onTypingIndicator(
           phoneToJid(groupId),
           source,
