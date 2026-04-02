@@ -13,8 +13,83 @@ import { logger } from '../logger.js';
 import { transcribeAudioFile } from '../transcription.js';
 import { Channel, NewMessage } from '../types.js';
 import { ChannelOpts, registerChannel } from './registry.js';
+import {
+  GroupBackoffConfig,
+  GroupBackoffManager,
+} from '../group-backoff.js';
 
 const SIGNAL_PREFIX = 'signal:';
+
+// ---------------------------------------------------------------------------
+// Markdown → Signal body ranges
+// ---------------------------------------------------------------------------
+
+interface TextStyle {
+  start: number;
+  length: number;
+  style: 'BOLD' | 'ITALIC' | 'STRIKETHROUGH' | 'MONOSPACE' | 'SPOILER';
+}
+
+/**
+ * Parse markdown formatting from text and return plain text + Signal text styles.
+ * Supports: **bold**, *italic*, ~~strikethrough~~, `monospace`, ```code blocks```
+ */
+function parseMarkdownToSignal(input: string): {
+  text: string;
+  textStyles: TextStyle[];
+} {
+  const styles: TextStyle[] = [];
+  let text = input;
+
+  // Process fenced code blocks first: ```...```
+  text = processPattern(
+    text,
+    styles,
+    /```(?:\w*\n)?([\s\S]*?)```/g,
+    'MONOSPACE',
+  );
+  // Inline code: `...`
+  text = processPattern(text, styles, /`([^`]+)`/g, 'MONOSPACE');
+  // Bold: **...**
+  text = processPattern(text, styles, /\*\*(.+?)\*\*/g, 'BOLD');
+  // Italic: *...*
+  text = processPattern(text, styles, /(?<!\*)\*([^*]+)\*(?!\*)/g, 'ITALIC');
+  // Strikethrough: ~~...~~
+  text = processPattern(text, styles, /~~(.+?)~~/g, 'STRIKETHROUGH');
+
+  return { text, textStyles: styles };
+}
+
+function processPattern(
+  text: string,
+  styles: TextStyle[],
+  pattern: RegExp,
+  style: TextStyle['style'],
+): string {
+  let result = '';
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    const fullMatch = match[0];
+    const inner = match[1];
+    const matchStart = match.index!;
+
+    // Append text before this match
+    result += text.slice(lastIndex, matchStart);
+
+    // Record style at the position in the output string
+    const styleStart = result.length;
+    result += inner;
+    styles.push({ start: styleStart, length: inner.length, style });
+
+    lastIndex = matchStart + fullMatch.length;
+  }
+
+  // Append remaining text
+  result += text.slice(lastIndex);
+
+  return result;
+}
 
 function getSignalEnv(): { botPhone: string; userPhone: string } {
   const env = readEnvFile([
@@ -32,6 +107,40 @@ function getSignalEnv(): { botPhone: string; userPhone: string } {
       '',
     userPhone: process.env.SIGNAL_USER_PHONE || env.SIGNAL_USER_PHONE || '',
   };
+}
+
+function getBackoffConfig(): GroupBackoffConfig {
+  const env = readEnvFile([
+    'GROUP_BACKOFF_MIN_MS',
+    'GROUP_BACKOFF_MAX_MS',
+    'GROUP_TYPING_TIMEOUT_MS',
+    'GROUP_TYPING_STOP_GRACE_MS',
+  ]);
+  return {
+    minDelayMs: parseInt(
+      process.env.GROUP_BACKOFF_MIN_MS || env.GROUP_BACKOFF_MIN_MS || '5000',
+      10,
+    ),
+    maxDelayMs: parseInt(
+      process.env.GROUP_BACKOFF_MAX_MS || env.GROUP_BACKOFF_MAX_MS || '20000',
+      10,
+    ),
+    typingTimeoutMs: parseInt(
+      process.env.GROUP_TYPING_TIMEOUT_MS || env.GROUP_TYPING_TIMEOUT_MS || '90000',
+      10,
+    ),
+    typingStopGraceMs: parseInt(
+      process.env.GROUP_TYPING_STOP_GRACE_MS || env.GROUP_TYPING_STOP_GRACE_MS || '3000',
+      10,
+    ),
+  };
+}
+
+function getKnownBots(): Set<string> {
+  const env = readEnvFile(['SIGNAL_KNOWN_BOTS']);
+  const raw = process.env.SIGNAL_KNOWN_BOTS || env.SIGNAL_KNOWN_BOTS || '';
+  if (!raw) return new Set();
+  return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 }
 
 /**
@@ -61,12 +170,23 @@ export class SignalChannel implements Channel {
   private outgoingQueue: Array<{ phone: string; text: string }> = [];
   private flushing = false;
   private opts: ChannelOpts;
+  private knownBots: Set<string>;
+  private backoffManager: GroupBackoffManager;
 
   constructor(opts: ChannelOpts) {
     this.opts = opts;
     const env = getSignalEnv();
     this.botPhone = env.botPhone;
     this.userPhone = env.userPhone;
+    this.knownBots = getKnownBots();
+    this.backoffManager = new GroupBackoffManager(
+      getBackoffConfig(),
+      (groupJid, messages) => {
+        for (const msg of messages) {
+          this.opts.onMessage(groupJid, msg);
+        }
+      },
+    );
   }
 
   async connect(): Promise<void> {
@@ -127,9 +247,37 @@ export class SignalChannel implements Channel {
     }
 
     try {
-      await this.signal.sendMessage(recipient, text);
+      const { text: plainText, textStyles } = parseMarkdownToSignal(text);
+
+      if (textStyles.length > 0) {
+        // Bypass signal-sdk's textStyles mapping (it converts to objects,
+        // but signal-cli's JSON-RPC expects "start:length:STYLE" strings).
+        const params: Record<string, unknown> = {
+          message: plainText,
+          account: this.botPhone,
+          textStyles: textStyles.map(
+            (s) => `${s.start}:${s.length}:${s.style}`,
+          ),
+        };
+        if (this.isGroupId(recipient)) {
+          params.groupId = recipient;
+        } else {
+          params.recipients = [recipient];
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (this.signal as any).sendJsonRpcRequest('send', params);
+      } else {
+        await this.signal.sendMessage(recipient, plainText);
+      }
+
       logger.info(
-        { jid, recipient, isGroup, length: text.length },
+        {
+          jid,
+          recipient,
+          isGroup,
+          length: plainText.length,
+          styles: textStyles.length,
+        },
         'Signal: message sent',
       );
     } catch (err) {
@@ -142,6 +290,7 @@ export class SignalChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    this.backoffManager.shutdown();
     this.connected = false;
     await this.signal.gracefulShutdown();
     logger.info('Signal: disconnected');
@@ -179,6 +328,20 @@ export class SignalChannel implements Channel {
     );
   }
 
+  private isDirectMention(text: string): boolean {
+    const name = ASSISTANT_NAME.toLowerCase();
+    const lower = text.toLowerCase();
+    return (
+      lower.includes(`@${name}`) ||
+      lower.startsWith(`${name},`) ||
+      lower.startsWith(`${name} `)
+    );
+  }
+
+  private isKnownBot(phone: string): boolean {
+    return this.knownBots.has(phone);
+  }
+
   private async handleMessage(params: unknown): Promise<void> {
     const p = params as Record<string, unknown>;
     const envelope = p?.envelope as Record<string, unknown> | undefined;
@@ -190,6 +353,23 @@ export class SignalChannel implements Channel {
     const timestamp = new Date(
       Number(envelope.timestamp) || Date.now(),
     ).toISOString();
+
+    // Intercept typing indicators for group backoff coordination
+    const typingMsg = envelope.typingMessage as
+      | Record<string, unknown>
+      | undefined;
+    if (typingMsg) {
+      const action = typingMsg.action as string; // "STARTED" or "STOPPED"
+      const groupId = typingMsg.groupId as string | undefined;
+      if (groupId && this.isKnownBot(source)) {
+        this.backoffManager.onTypingIndicator(
+          phoneToJid(groupId),
+          source,
+          action,
+        );
+      }
+      return;
+    }
 
     const dataMsg = envelope.dataMessage as Record<string, unknown> | undefined;
     const syncMsg = envelope.syncMessage as Record<string, unknown> | undefined;
@@ -381,6 +561,12 @@ export class SignalChannel implements Channel {
       is_bot_message: isBotMessage,
     };
 
+    // Group messages from others go through backoff (unless direct mention)
+    if (isGroup && !isFromMe && !this.isDirectMention(finalContent)) {
+      this.backoffManager.onGroupMessage(chatJid, message);
+      return;
+    }
+
     this.opts.onMessage(chatJid, message);
   }
 
@@ -394,7 +580,27 @@ export class SignalChannel implements Channel {
       );
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
-        await this.signal.sendMessage(item.phone, item.text);
+        const { text: plainText, textStyles } = parseMarkdownToSignal(
+          item.text,
+        );
+        if (textStyles.length > 0) {
+          const params: Record<string, unknown> = {
+            message: plainText,
+            account: this.botPhone,
+            textStyles: textStyles.map(
+              (s) => `${s.start}:${s.length}:${s.style}`,
+            ),
+          };
+          if (this.isGroupId(item.phone)) {
+            params.groupId = item.phone;
+          } else {
+            params.recipients = [item.phone];
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (this.signal as any).sendJsonRpcRequest('send', params);
+        } else {
+          await this.signal.sendMessage(item.phone, plainText);
+        }
         logger.info({ phone: item.phone }, 'Signal: queued message sent');
       }
     } finally {
