@@ -446,6 +446,24 @@ export class SignalChannel implements Channel {
       // Detect bot messages by assistant name prefix (fallback detection)
       isBotMessage =
         typeof text === 'string' && text.startsWith(`${ASSISTANT_NAME}:`);
+
+      // Resolve Signal mentions: signal-cli uses U+FFFC (object replacement char)
+      // as a placeholder for @mentions. Replace with @Name so trigger patterns match.
+      const mentions = dataMsg.mentions as
+        | Array<Record<string, unknown>>
+        | undefined;
+      if (text && mentions?.length) {
+        for (const mention of mentions) {
+          const mentionNumber = (mention.number ?? '') as string;
+          const mentionUuid = (mention.uuid ?? '') as string;
+          if (
+            mentionNumber === this.botPhone ||
+            mentionUuid === this.botPhone
+          ) {
+            text = text.replace('\uFFFC', `@${ASSISTANT_NAME}`);
+          }
+        }
+      }
     } else {
       return;
     }

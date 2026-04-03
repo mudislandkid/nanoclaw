@@ -255,14 +255,26 @@ function buildContainerArgs(
   }
 
   // Inject Family HQ env vars if configured (for MCP server inside container)
-  const familyHqEnv = readEnvFile(['FAMILY_HQ_API_URL', 'FAMILY_HQ_API_SECRET']);
-  const fhqUrl = process.env.FAMILY_HQ_API_URL || familyHqEnv.FAMILY_HQ_API_URL || '';
-  const fhqSecret = process.env.FAMILY_HQ_API_SECRET || familyHqEnv.FAMILY_HQ_API_SECRET || '';
+  const familyHqEnv = readEnvFile([
+    'FAMILY_HQ_API_URL',
+    'FAMILY_HQ_API_SECRET',
+  ]);
+  const fhqUrl =
+    process.env.FAMILY_HQ_API_URL || familyHqEnv.FAMILY_HQ_API_URL || '';
+  const fhqSecret =
+    process.env.FAMILY_HQ_API_SECRET || familyHqEnv.FAMILY_HQ_API_SECRET || '';
   if (fhqUrl) {
     // Rewrite localhost URLs to host gateway so containers can reach the host
     const containerFhqUrl = fhqUrl.replace('localhost', CONTAINER_HOST_GATEWAY);
     args.push('-e', `FAMILY_HQ_API_URL=${containerFhqUrl}`);
     args.push('-e', `FAMILY_HQ_API_SECRET=${fhqSecret}`);
+  }
+
+  // GitHub token for gh CLI (access to mudislandkid repos)
+  const ghEnv = readEnvFile(['GH_TOKEN']);
+  const ghToken = process.env.GH_TOKEN || ghEnv.GH_TOKEN || '';
+  if (ghToken) {
+    args.push('-e', `GH_TOKEN=${ghToken}`);
   }
 
   for (const mount of mounts) {
