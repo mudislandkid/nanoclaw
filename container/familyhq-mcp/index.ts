@@ -290,6 +290,152 @@ server.tool(
   },
 );
 
+// --- Kids Chores ---
+
+server.tool(
+  'list_chores',
+  'List all chores configured for the kids',
+  {},
+  async () => {
+    const data = await apiGet('/kids/chores');
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'create_chore',
+  'Create a new chore for one or more children. Frequency can be one_off, daily, specific_days, or weekly.',
+  {
+    title: z.string().describe('Chore title, e.g. "Make bed"'),
+    description: z.string().optional().describe('Description of what the chore involves'),
+    frequency: z.string().describe('one_off, daily, specific_days, or weekly'),
+    specific_days: z.array(z.number()).optional().describe('Days of week (0=Mon..6=Sun) — required if frequency is specific_days'),
+    reward_value: z.number().optional().describe('Pocket money reward in pounds (e.g. 0.50)'),
+    requires_approval: z.boolean().optional().describe('Whether a parent must approve completion (default true)'),
+    child_ids: z.array(z.string()).describe('Array of child member IDs to assign the chore to'),
+    icon: z.string().optional().describe('Icon name (default "star")'),
+  },
+  async (params) => {
+    const data = await apiPost('/kids/chores', params);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'update_chore',
+  'Update an existing chore (change title, reward, frequency, etc.)',
+  {
+    chore_id: z.string().describe('Chore ID'),
+    title: z.string().optional().describe('New title'),
+    description: z.string().optional().describe('New description'),
+    frequency: z.string().optional().describe('one_off, daily, specific_days, or weekly'),
+    reward_value: z.number().optional().describe('New reward value in pounds'),
+    is_active: z.boolean().optional().describe('Activate or deactivate the chore'),
+  },
+  async ({ chore_id, ...updates }) => {
+    const data = await apiPatch(`/kids/chores/${chore_id}`, updates);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+// --- Kids Wallet ---
+
+server.tool(
+  'kid_wallet',
+  'Get a child\'s wallet balance and earned/pending amounts',
+  {
+    child_id: z.string().describe('Child member ID'),
+  },
+  async ({ child_id }) => {
+    const data = await apiGet(`/kids/wallet/${child_id}`);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'kid_transactions',
+  'Get a child\'s transaction history (earnings, payments, adjustments)',
+  {
+    child_id: z.string().describe('Child member ID'),
+  },
+  async ({ child_id }) => {
+    const data = await apiGet(`/kids/wallet/${child_id}/transactions`);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'pending_approvals',
+  'Get chore completions waiting for parent approval',
+  {},
+  async () => {
+    const data = await apiGet('/kids/approvals/pending');
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'approve_chore',
+  'Approve or reject a completed chore',
+  {
+    completion_id: z.string().describe('Chore completion ID'),
+    approved: z.boolean().describe('true to approve, false to reject'),
+    feedback: z.string().optional().describe('Optional feedback message'),
+  },
+  async ({ completion_id, ...body }) => {
+    const data = await apiPost(`/kids/approvals/${completion_id}`, body);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+// --- School Day ---
+
+server.tool(
+  'school_day_today',
+  'Get today\'s school day pack status — what activities and items are needed',
+  {},
+  async () => {
+    const data = await apiGet('/school-day/today');
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'school_day_week',
+  'Get a child\'s school day schedule for the week',
+  {
+    child_id: z.string().describe('Child member ID'),
+  },
+  async ({ child_id }) => {
+    const data = await apiGet(`/school-day/children/${child_id}/week`);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+// --- Documents ---
+
+server.tool(
+  'list_documents',
+  'List uploaded family documents (school letters, bills, records, etc.)',
+  {},
+  async () => {
+    const data = await apiGet('/documents');
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'search_documents',
+  'Search documents by keyword',
+  {
+    query: z.string().describe('Search query'),
+  },
+  async ({ query }) => {
+    const data = await apiGet(`/documents/search?q=${encodeURIComponent(query)}`);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
 // --- Notifications ---
 
 server.tool(
