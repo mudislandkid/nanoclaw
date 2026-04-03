@@ -17,3 +17,6 @@ import './whatsapp.js';
 
 // outlook
 import './outlook.js';
+
+// familyhq
+import './familyhq.js';
