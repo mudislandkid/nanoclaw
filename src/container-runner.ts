@@ -6,6 +6,8 @@ import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { readEnvFile } from './env.js';
+
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -250,6 +252,17 @@ function buildContainerArgs(
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
+  }
+
+  // Inject Family HQ env vars if configured (for MCP server inside container)
+  const familyHqEnv = readEnvFile(['FAMILY_HQ_API_URL', 'FAMILY_HQ_API_SECRET']);
+  const fhqUrl = process.env.FAMILY_HQ_API_URL || familyHqEnv.FAMILY_HQ_API_URL || '';
+  const fhqSecret = process.env.FAMILY_HQ_API_SECRET || familyHqEnv.FAMILY_HQ_API_SECRET || '';
+  if (fhqUrl) {
+    // Rewrite localhost URLs to host gateway so containers can reach the host
+    const containerFhqUrl = fhqUrl.replace('localhost', CONTAINER_HOST_GATEWAY);
+    args.push('-e', `FAMILY_HQ_API_URL=${containerFhqUrl}`);
+    args.push('-e', `FAMILY_HQ_API_SECRET=${fhqSecret}`);
   }
 
   for (const mount of mounts) {

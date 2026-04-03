@@ -359,8 +359,9 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
-  // Discover optional MCP servers based on mounted credentials
+  // Discover optional MCP servers based on mounted credentials / env vars
   const hasOutlookMcp = fs.existsSync('/workspace/extra/outlook-mcp/tokens.json');
+  const hasFamilyHqMcp = !!process.env.FAMILY_HQ_API_URL;
 
   const stream = new MessageStream();
   stream.push(prompt);
@@ -451,6 +452,7 @@ async function runQuery(
         'NotebookEdit',
         'mcp__nanoclaw__*',
         ...(hasOutlookMcp ? ['mcp__outlook-mcp__*'] : []),
+        ...(hasFamilyHqMcp ? ['mcp__familyhq__*'] : []),
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -470,6 +472,16 @@ async function runQuery(
           'outlook-mcp': {
             command: 'npx',
             args: ['tsx', '/app/outlook-mcp/index.ts'],
+          },
+        } : {}),
+        ...(hasFamilyHqMcp ? {
+          'familyhq': {
+            command: 'npx',
+            args: ['tsx', '/app/familyhq-mcp/index.ts'],
+            env: {
+              FAMILY_HQ_API_URL: process.env.FAMILY_HQ_API_URL!,
+              FAMILY_HQ_API_SECRET: process.env.FAMILY_HQ_API_SECRET || '',
+            },
           },
         } : {}),
       },
