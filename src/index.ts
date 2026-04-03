@@ -342,6 +342,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   await channel.setTyping?.(chatJid, true);
+
+  // Keep typing indicator alive while agent is working.
+  // Signal's typing indicator auto-expires after ~5 seconds,
+  // so we resend every 4 seconds to keep it visible.
+  const typingInterval = setInterval(() => {
+    channel.setTyping?.(chatJid, true)?.catch(() => {});
+  }, 4000);
+
   let hadError = false;
   let outputSentToUser = false;
 
@@ -381,6 +389,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     },
   );
 
+  clearInterval(typingInterval);
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
@@ -394,6 +403,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     }
+
+    // Notify the chat that something went wrong
+    await channel
+      .sendMessage(
+        chatJid,
+        `Sorry, I ran into an error processing that request. I'll retry automatically.`,
+      )
+      .catch((err) =>
+        logger.warn({ chatJid, err }, 'Failed to send error notification'),
+      );
+
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
@@ -678,11 +698,7 @@ async function main(): Promise<void> {
       }
 
       // Auto-register new Family HQ members
-      if (
-        channel === 'familyhq' &&
-        !registeredGroups[chatJid] &&
-        name
-      ) {
+      if (channel === 'familyhq' && !registeredGroups[chatJid] && name) {
         autoRegisterFamilyHQMember(chatJid, name);
       }
     },
