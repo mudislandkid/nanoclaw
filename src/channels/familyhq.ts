@@ -97,6 +97,22 @@ export class FamilyHQChannel implements Channel {
     logger.info('Family HQ channel disconnected');
   }
 
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    const memberId = jid.replace(FAMILYHQ_PREFIX, '');
+    try {
+      await fetch(new URL(`${this.apiUrl}/andy/webhook/typing`).toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Api-Secret': this.apiSecret,
+        },
+        body: JSON.stringify({ member_id: memberId, is_typing: isTyping }),
+      });
+    } catch {
+      // Best-effort — don't fail on typing indicator errors
+    }
+  }
+
   private handleInbound(
     req: http.IncomingMessage,
     res: http.ServerResponse,
