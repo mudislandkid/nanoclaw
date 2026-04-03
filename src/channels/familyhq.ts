@@ -18,7 +18,12 @@ export class FamilyHQChannel implements Channel {
   private port: number;
   private connected = false;
 
-  constructor(opts: ChannelOpts, apiUrl: string, apiSecret: string, port: number) {
+  constructor(
+    opts: ChannelOpts,
+    apiUrl: string,
+    apiSecret: string,
+    port: number,
+  ) {
     this.opts = opts;
     this.apiUrl = apiUrl;
     this.apiSecret = apiSecret;
@@ -92,7 +97,10 @@ export class FamilyHQChannel implements Channel {
     logger.info('Family HQ channel disconnected');
   }
 
-  private handleInbound(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handleInbound(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): void {
     const secret = req.headers['x-api-secret'] as string | undefined;
     if (secret !== this.apiSecret) {
       res.writeHead(401);
@@ -155,8 +163,7 @@ registerChannel('familyhq', (opts: ChannelOpts) => {
     'FAMILY_HQ_INBOUND_PORT',
   ]);
 
-  const apiUrl =
-    process.env.FAMILY_HQ_API_URL || env.FAMILY_HQ_API_URL || '';
+  const apiUrl = process.env.FAMILY_HQ_API_URL || env.FAMILY_HQ_API_URL || '';
   const apiSecret =
     process.env.FAMILY_HQ_API_SECRET || env.FAMILY_HQ_API_SECRET || '';
   const port = parseInt(

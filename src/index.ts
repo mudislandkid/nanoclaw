@@ -4,11 +4,13 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  GROUPS_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -112,6 +114,141 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     { jid, name: group.name, folder: group.folder },
     'Group registered',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Signal group auto-registration
+// ---------------------------------------------------------------------------
+
+/** Slugify a group name into a valid folder name: signal_my-group-name */
+function slugifyGroupName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50);
+  return `signal_${slug || 'group'}`;
+}
+
+/** Ensure folder name is unique among registered groups */
+function uniqueFolder(base: string): string {
+  const existing = new Set(
+    Object.values(registeredGroups).map((g) => g.folder),
+  );
+  if (!existing.has(base)) return base;
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base}-${i}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+/**
+ * Auto-register a newly discovered Signal group.
+ * Creates folder, copies default CLAUDE.md, adds second-brain mount,
+ * and sends a notification to the main 1:1 chat.
+ */
+function autoRegisterSignalGroup(chatJid: string, name: string): void {
+  if (registeredGroups[chatJid]) return;
+
+  const folder = uniqueFolder(slugifyGroupName(name));
+
+  // Build container config with second-brain mount if configured
+  const env = readEnvFile(['SECOND_BRAIN_PATH']);
+  const vaultPath = env.SECOND_BRAIN_PATH || '';
+  const containerConfig = vaultPath
+    ? {
+        additionalMounts: [
+          {
+            hostPath: vaultPath,
+            containerPath: 'second-brain',
+            readonly: false,
+          },
+        ],
+      }
+    : undefined;
+
+  const group: RegisteredGroup = {
+    name,
+    folder,
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: new Date().toISOString(),
+    requiresTrigger: false,
+    containerConfig,
+  };
+
+  registerGroup(chatJid, group);
+
+  // Create conversations dir and copy default CLAUDE.md from global
+  const groupDir = path.join(GROUPS_DIR, folder);
+  fs.mkdirSync(path.join(groupDir, 'conversations'), { recursive: true });
+  const globalClaude = path.join(GROUPS_DIR, 'global', 'CLAUDE.md');
+  const groupClaude = path.join(groupDir, 'CLAUDE.md');
+  if (fs.existsSync(globalClaude) && !fs.existsSync(groupClaude)) {
+    let content = fs.readFileSync(globalClaude, 'utf-8');
+    // Add group chat nuance
+    content +=
+      '\n\n## Group Chat\n\nThis is a group chat. ' +
+      'Focus on capturing ideas, decisions, and tasks with attribution. ' +
+      "Don't log general conversation — capture the substance.\n";
+    fs.writeFileSync(groupClaude, content);
+  }
+
+  // Notify on main 1:1 chat
+  const mainJid = Object.entries(registeredGroups).find(
+    ([, g]) => g.isMain,
+  )?.[0];
+  if (mainJid) {
+    const ch = findChannel(channels, mainJid);
+    if (ch) {
+      const msg =
+        `New Signal group auto-registered:\n` +
+        `• Name: ${name}\n` +
+        `• Folder: ${folder}\n` +
+        `• Trigger required: no\n` +
+        `• Second brain: ${vaultPath ? 'mounted' : 'not configured'}`;
+      ch.sendMessage(mainJid, msg).catch((err) =>
+        logger.error({ err }, 'Failed to send auto-register notification'),
+      );
+    }
+  }
+
+  logger.info({ chatJid, name, folder }, 'Signal group auto-registered');
+}
+
+/**
+ * Auto-register a Family HQ member as a 1:1 chat group.
+ */
+function autoRegisterFamilyHQMember(chatJid: string, name: string): void {
+  if (registeredGroups[chatJid]) return;
+
+  const slug = name
+    .replace(/^Family HQ:\s*/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50);
+  const folder = uniqueFolder(`familyhq_${slug || 'user'}`);
+
+  const group: RegisteredGroup = {
+    name,
+    folder,
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: new Date().toISOString(),
+    requiresTrigger: false,
+  };
+
+  registerGroup(chatJid, group);
+
+  // Copy default CLAUDE.md from global
+  const groupDir = path.join(GROUPS_DIR, folder);
+  const globalClaude = path.join(GROUPS_DIR, 'global', 'CLAUDE.md');
+  const groupClaude = path.join(groupDir, 'CLAUDE.md');
+  if (fs.existsSync(globalClaude) && !fs.existsSync(groupClaude)) {
+    fs.writeFileSync(groupClaude, fs.readFileSync(globalClaude, 'utf-8'));
+  }
+
+  logger.info({ chatJid, name, folder }, 'Family HQ member auto-registered');
 }
 
 /**
@@ -527,7 +664,28 @@ async function main(): Promise<void> {
       name?: string,
       channel?: string,
       isGroup?: boolean,
-    ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    ) => {
+      storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
+
+      // Auto-register new Signal groups
+      if (
+        channel === 'signal' &&
+        isGroup &&
+        !registeredGroups[chatJid] &&
+        name
+      ) {
+        autoRegisterSignalGroup(chatJid, name);
+      }
+
+      // Auto-register new Family HQ members
+      if (
+        channel === 'familyhq' &&
+        !registeredGroups[chatJid] &&
+        name
+      ) {
+        autoRegisterFamilyHQMember(chatJid, name);
+      }
+    },
     registeredGroups: () => registeredGroups,
   };
 
