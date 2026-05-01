@@ -14,6 +14,7 @@ import {
   type GraphEvent,
 } from './calendar-logic.js';
 import { type ApprovalTokenStore } from './approval-tokens.js';
+import { htmlToText } from './html-text.js';
 
 export type GraphFetch = (
   urlPath: string,
@@ -178,7 +179,7 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
         ...formatEventSummary(event),
         body:
           event.body?.contentType === 'html'
-            ? event.body.content.replace(/<[^>]+>/g, '').trim()
+            ? htmlToText(event.body.content)
             : (event.body?.content ?? ''),
         attendees: (event.attendees ?? []).map((a) => ({
           email: a.emailAddress.address,

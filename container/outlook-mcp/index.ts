@@ -9,6 +9,9 @@ import path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { createTokenStore } from './approval-tokens.js';
+import { registerCalendarTools } from './calendar-tools.js';
+import { htmlToText } from './html-text.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -73,7 +76,7 @@ async function ensureValidToken(): Promise<string> {
     client_secret: creds.clientSecret,
     refresh_token: creds.refreshToken,
     grant_type: 'refresh_token',
-    scope: 'https://graph.microsoft.com/Mail.ReadWrite offline_access',
+    scope: 'https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Calendars.ReadWrite offline_access',
   });
 
   const res = await fetch(TOKEN_ENDPOINT, {
@@ -129,25 +132,6 @@ async function graphFetch(
   };
 
   return fetch(url, { ...options, headers });
-}
-
-// ---------------------------------------------------------------------------
-// HTML to plain text (no external dependencies)
-// ---------------------------------------------------------------------------
-
-function htmlToText(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +418,13 @@ server.tool(
     };
   },
 );
+
+// ---------------------------------------------------------------------------
+// Calendar tools
+// ---------------------------------------------------------------------------
+
+const calendarTokenStore = createTokenStore({ ttlMs: 5 * 60 * 1000 });
+registerCalendarTools({ server, graphFetch, tokenStore: calendarTokenStore });
 
 // ---------------------------------------------------------------------------
 // Start
