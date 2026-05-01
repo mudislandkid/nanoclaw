@@ -28,6 +28,25 @@ test -f src/channels/outlook.ts && echo "CODE_OK" || echo "CODE_MISSING"
 
 If both exist, skip to Phase 6 (Verify).
 
+### Check if calendar scope is granted
+
+If tokens exist but calendar scope hasn't been granted yet (existing users upgrading from email-only Outlook), the agent's calendar tools will return 403 errors.
+
+```bash
+test -f ~/.outlook-mcp/tokens.json && \
+  node -e "
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const t = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.outlook-mcp', 'tokens.json'), 'utf-8'));
+    fetch('https://graph.microsoft.com/v1.0/me/calendars?\$top=1', {
+      headers: { Authorization: 'Bearer ' + t.accessToken }
+    }).then(r => console.log(r.status === 200 ? 'CALENDAR_OK' : 'CALENDAR_NEEDS_REAUTH:' + r.status));
+  "
+```
+
+If the output is `CALENDAR_NEEDS_REAUTH:*`, re-run Phase 4 (OAuth Flow) — this will re-consent with the new `Calendars.ReadWrite` scope. Existing email functionality keeps working through the re-auth.
+
 ## Phase 2: Code Installation
 
 Check if the Outlook channel code exists:
@@ -78,8 +97,9 @@ AskUserQuestion: Paste the client secret value:
     - `Mail.Read`
     - `Mail.ReadWrite`
     - `Mail.Send`
+    - `Calendars.ReadWrite`
     - `User.Read` (should already be there)
-11. Verify all 4 permissions are listed
+11. Verify all 5 permissions are listed
 
 ## Phase 4: OAuth Flow
 
@@ -92,6 +112,7 @@ npx tsx setup/index.ts --step outlook-auth -- --client-id <CLIENT_ID> --client-s
 This will:
 - Save credentials to `~/.outlook-mcp/`
 - Open the browser for Microsoft sign-in
+- Request scopes: `Mail.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `User.Read`, `offline_access`
 - Start a local server on port 3333 to receive the callback
 - Exchange the auth code for access + refresh tokens
 - Save tokens to `~/.outlook-mcp/tokens.json`
