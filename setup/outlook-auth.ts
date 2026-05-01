@@ -9,7 +9,7 @@ import { emitStatus } from './status.js';
 const CREDS_DIR = path.join(os.homedir(), '.outlook-mcp');
 const REDIRECT_URI = 'http://localhost:3333/callback';
 const AUTH_BASE = 'https://login.microsoftonline.com/consumers/oauth2/v2.0';
-const SCOPES = 'Mail.Read Mail.ReadWrite Mail.Send User.Read offline_access';
+const SCOPES = 'Mail.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite User.Read offline_access';
 
 export async function run(args: string[]): Promise<void> {
   // Parse args: --client-id <id> --client-secret <secret>
