@@ -73,13 +73,26 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
   // tokenStore is wired in here so later tasks (5-7) can use it for write tools
   void tokenStore;
 
+  // ---------------------------------------------------------------------------
+  // IMPORTANT: use `server.registerTool` with `inputSchema: <full ZodObject>`
+  // (NOT `server.tool` with `<schema>.shape`).
+  //
+  // The `server.tool(...)` overload that takes a raw shape internally calls
+  // `z.object(shape)` WITHOUT `.strict()`, so any `.strict()` enforcement on
+  // the original schema is silently dropped at the MCP boundary — unknown
+  // keys would be stripped instead of rejected. `registerTool` accepts a
+  // full schema and preserves its strict mode. This is essential for the
+  // personal-only invariant on create/update/delete (no attendees field).
+  // ---------------------------------------------------------------------------
+
   // -------------------------------------------------------------------------
   // outlook_list_calendars
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     'outlook_list_calendars',
-    'List all calendars in the mailbox.',
-    {},
+    {
+      description: 'List all calendars in the mailbox.',
+    },
     async () => {
       const res = await graphFetch('/me/calendars?$select=id,name,isDefaultCalendar,canEdit');
       if (!res.ok) {
@@ -95,10 +108,13 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
   // -------------------------------------------------------------------------
   // outlook_list_events
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     'outlook_list_events',
-    'List events within a date range. Returns event summaries (id, subject, start, end, location, attendee count, etc.). Use outlook_get_event for full details.',
-    listEventsSchema.shape,
+    {
+      description:
+        'List events within a date range. Returns event summaries (id, subject, start, end, location, attendee count, etc.). Use outlook_get_event for full details.',
+      inputSchema: listEventsSchema,
+    },
     async (args) => {
       const events = await fetchCalendarView(
         graphFetch,
@@ -115,10 +131,13 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
   // -------------------------------------------------------------------------
   // outlook_get_event
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     'outlook_get_event',
-    'Get full details of a single event including body, attendees, and recurrence pattern.',
-    getEventSchema.shape,
+    {
+      description:
+        'Get full details of a single event including body, attendees, and recurrence pattern.',
+      inputSchema: getEventSchema,
+    },
     async (args) => {
       const url = `/me/events/${encodeURIComponent(args.eventId)}`;
       const res = await graphFetch(url, {
@@ -148,10 +167,13 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
   // -------------------------------------------------------------------------
   // outlook_find_free_time — MUST request UTC (computeFreeGaps requires it)
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     'outlook_find_free_time',
-    'Find free gaps in the calendar between a start and end. Useful for scheduling. Returns gaps of at least minDurationMinutes. Note: returns literal calendar gaps — does not respect working hours yet.',
-    findFreeTimeSchema.shape,
+    {
+      description:
+        'Find free gaps in the calendar between a start and end. Useful for scheduling. Returns gaps of at least minDurationMinutes. Note: returns literal calendar gaps — does not respect working hours yet.',
+      inputSchema: findFreeTimeSchema,
+    },
     async (args) => {
       const events = await fetchCalendarView(
         graphFetch,
@@ -175,10 +197,13 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
   // -------------------------------------------------------------------------
   // outlook_create_event — direct write (no attendees by schema)
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     'outlook_create_event',
-    'Create an event on your calendar. Personal-only — does not support inviting other attendees. Use outlook_update_event to modify, outlook_delete_event to cancel.',
-    createEventSchema.shape,
+    {
+      description:
+        'Create an event on your calendar. Personal-only — does not support inviting other attendees. Use outlook_update_event to modify, outlook_delete_event to cancel.',
+      inputSchema: createEventSchema,
+    },
     async (args) => {
       const payload = {
         subject: args.subject,

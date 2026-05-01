@@ -15,6 +15,7 @@
     "prepare": "husky",
     "setup": "tsx setup/index.ts",
     "auth": "tsx src/whatsapp-auth.ts",
+    "pretest": "npm install --prefix container/outlook-mcp --silent --no-audit --no-fund --no-progress",
     "test": "vitest run",
     "test:watch": "vitest"
   },
