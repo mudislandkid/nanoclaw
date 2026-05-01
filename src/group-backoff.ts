@@ -19,10 +19,7 @@ interface GroupBackoffState {
   remainingMs: number;
 }
 
-export type OnBackoffFlush = (
-  groupJid: string,
-  messages: NewMessage[],
-) => void;
+export type OnBackoffFlush = (groupJid: string, messages: NewMessage[]) => void;
 
 export class GroupBackoffManager {
   private pending = new Map<string, GroupBackoffState>();
@@ -49,10 +46,7 @@ export class GroupBackoffManager {
         existing.paused = false;
         existing.pausedAt = null;
         existing.remainingMs = backoffMs;
-        existing.timer = setTimeout(
-          () => this.flush(groupJid),
-          backoffMs,
-        );
+        existing.timer = setTimeout(() => this.flush(groupJid), backoffMs);
       }
       return;
     }
@@ -77,11 +71,7 @@ export class GroupBackoffManager {
     );
   }
 
-  onTypingIndicator(
-    groupJid: string,
-    sender: string,
-    action: string,
-  ): void {
+  onTypingIndicator(groupJid: string, sender: string, action: string): void {
     const state = this.pending.get(groupJid);
     if (!state) return;
 
@@ -149,10 +139,7 @@ export class GroupBackoffManager {
     state.startedAt = Date.now();
     state.backoffMs = state.remainingMs;
 
-    state.timer = setTimeout(
-      () => this.flush(groupJid),
-      state.remainingMs,
-    );
+    state.timer = setTimeout(() => this.flush(groupJid), state.remainingMs);
 
     logger.debug(
       { groupJid, remainingMs: state.remainingMs },

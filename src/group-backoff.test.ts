@@ -170,7 +170,9 @@ describe('GroupBackoffManager', () => {
     mgr.onTypingIndicator('signal:group1', '+447000000099', 'STARTED');
 
     // Bot never sends STOPPED or a message — timeout should kick in
-    await vi.advanceTimersByTimeAsync(TEST_CONFIG.typingTimeoutMs + TEST_CONFIG.maxDelayMs + 10);
+    await vi.advanceTimersByTimeAsync(
+      TEST_CONFIG.typingTimeoutMs + TEST_CONFIG.maxDelayMs + 10,
+    );
     expect(onFlush).toHaveBeenCalledTimes(1);
   });
 

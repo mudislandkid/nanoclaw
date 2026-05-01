@@ -38,3 +38,9 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# project-mapper MCP local cache
+.project-mapper.db*
+
+# Personal chat exports
+botsplosion-export.md
