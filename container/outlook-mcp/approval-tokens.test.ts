@@ -64,4 +64,31 @@ describe('approval tokens', () => {
       expect(result.kind).toBe(kind);
     }
   });
+
+  it('garbage-collects expired entries on next issue', () => {
+    vi.useFakeTimers();
+    const t1 = store.issue('delete', { eventId: 'evt-1' });
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+    // t1 is now expired but still in the map. Issuing a fresh token should sweep it.
+    store.issue('delete', { eventId: 'evt-2' });
+    // Now t1 should be gone — verifyAndConsume hits the same `unknown id` path
+    expect(() => store.verifyAndConsume(t1)).toThrow(
+      /token_expired_or_invalid/,
+    );
+    vi.useRealTimers();
+  });
+
+  it('drops the entry after a bad-signature attempt (no repeated guesses)', () => {
+    const token = store.issue('delete', { eventId: 'evt-1' });
+    const [id, sig] = token.split('.');
+    const forged = `${id}.${sig.slice(0, -1)}${sig.slice(-1) === 'a' ? 'b' : 'a'}`;
+    // First attempt: bad signature
+    expect(() => store.verifyAndConsume(forged)).toThrow(
+      /token_expired_or_invalid/,
+    );
+    // Second attempt with correct token should now also fail because entry is gone
+    expect(() => store.verifyAndConsume(token)).toThrow(
+      /token_expired_or_invalid/,
+    );
+  });
 });

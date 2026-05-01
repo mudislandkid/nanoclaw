@@ -39,12 +39,18 @@ export function createTokenStore(opts: StoreOptions): ApprovalTokenStore {
 
   return {
     issue(kind, payload) {
+      // Opportunistic GC sweep: prevents unbounded memory growth from
+      // approval prompts that are issued but never consumed.
+      const now = Date.now();
+      for (const [k, v] of items) {
+        if (v.expiresAt < now) items.delete(k);
+      }
       const id = crypto.randomBytes(16).toString('hex');
       const signature = sign(id, kind, payload);
       items.set(id, {
         kind,
         payload,
-        expiresAt: Date.now() + opts.ttlMs,
+        expiresAt: now + opts.ttlMs,
         signature,
       });
       return `${id}.${signature}`;
@@ -59,7 +65,12 @@ export function createTokenStore(opts: StoreOptions): ApprovalTokenStore {
         items.delete(id);
         throw new Error('token_expired_or_invalid');
       }
-      if (stored.signature !== sig) throw new Error('token_expired_or_invalid');
+      if (stored.signature !== sig) {
+        // Drop the entry on any signature mismatch — closes the window for
+        // an attacker who somehow guessed `id` from probing signatures.
+        items.delete(id);
+        throw new Error('token_expired_or_invalid');
+      }
       // single-use: delete on consume regardless of outcome below
       items.delete(id);
       return { kind: stored.kind, payload: stored.payload };
