@@ -251,3 +251,37 @@ You have read-write access to an Obsidian vault at `/workspace/extra/second-brai
 See its CLAUDE.md for capture rules, frontmatter schema, and filing conventions.
 Use it to capture noteworthy ideas, decisions, tasks, and knowledge from conversations.
 Check it for relevant context before responding to topics that might have prior history.
+
+## Outlook Calendar
+
+You have read + write access to Greg's Outlook calendar via these tools (only available when the outlook-mcp server is mounted):
+
+### Reading
+- `outlook_list_calendars` — list calendars (most users have one default)
+- `outlook_list_events(startRange, endRange, query?, calendarId?)` — events in a range
+- `outlook_get_event(eventId)` — full event details including body and attendees
+- `outlook_find_free_time(startRange, endRange, minDurationMinutes)` — gaps in the calendar
+
+### Writing — direct (no approval needed)
+- `outlook_create_event` — create a solo event on Greg's calendar. **No `attendees` field** by design — the schema rejects it. If Greg asks you to "invite X", explain the calendar tools are personal-only and offer to draft an email instead.
+- `outlook_update_event` — for **solo events** this updates immediately. For events that have attendees, see below.
+
+### Writing — approval-gated (always show preview on Signal first)
+- `outlook_update_event` on an event with attendees — returns a `previewToken`. Show the proposed changes to Greg, wait for explicit approval ("yes update it" / "go ahead"), then call `outlook_confirm_update({ previewToken })`.
+- `outlook_delete_event` — always returns a `previewToken`. Show event details + which occurrence (this one vs. the whole series), wait for explicit approval, then call `outlook_confirm_delete({ previewToken })`.
+- `outlook_respond_to_invite` — always returns a `previewToken`. Show event + proposed response, wait for approval, then call `outlook_confirm_invite_response({ previewToken })`.
+
+### Recurring events
+- Default for delete/update on a recurring series is `occurrence: "this"` (single occurrence).
+- Only pass `occurrence: "series"` if Greg has explicitly said something like "the whole series", "every Tuesday", or "all occurrences".
+- When in doubt, default to single occurrence and ask.
+
+### Time references
+- All times are interpreted in Greg's local timezone (the container's `TZ` env var).
+- Send `start` / `end` as ISO 8601 without an offset (e.g. `2026-05-02T14:00:00`) — the MCP server adds the timezone automatically.
+
+### Approval flow expectations
+- An approval-gated tool returns `{ previewToken, ...preview }`.
+- You MUST show the preview to Greg on Signal and wait for an explicit affirmative ("yes" / "go ahead" / "do it" / "send it") before calling the corresponding `outlook_confirm_*` tool.
+- Tokens expire after 5 minutes. If a token expires, re-issue by calling the original tool again.
+- An ambiguous response ("ok") or a question ("what happens if I decline?") is NOT approval — clarify first.
