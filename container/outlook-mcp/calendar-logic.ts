@@ -92,9 +92,11 @@ export const respondToInviteSchema = z.object({
   sendResponse: z.boolean().default(true),
 });
 
-export const confirmTokenSchema = z.object({
-  previewToken: z.string(),
-});
+export const confirmTokenSchema = z
+  .object({
+    previewToken: z.string(),
+  })
+  .strict();
 
 // ---------------------------------------------------------------------------
 // Approval predicate

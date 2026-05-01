@@ -4,8 +4,11 @@ import {
   getEventSchema,
   findFreeTimeSchema,
   createEventSchema,
+  updateEventSchema,
+  confirmTokenSchema,
   computeFreeGaps,
   formatEventSummary,
+  shouldRequireApproval,
   type GraphEvent,
 } from './calendar-logic.js';
 import { type ApprovalTokenStore } from './approval-tokens.js';
@@ -36,6 +39,31 @@ function jsonResult(data: unknown) {
 
 function calendarBase(calendarId?: string) {
   return calendarId ? `/me/calendars/${encodeURIComponent(calendarId)}` : '/me';
+}
+
+function buildUpdatePayload(args: {
+  subject?: string;
+  start?: string;
+  end?: string;
+  body?: string;
+  location?: string;
+  showAs?: string;
+}): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  if (args.subject !== undefined) payload.subject = args.subject;
+  if (args.body !== undefined) payload.body = { contentType: 'Text', content: args.body };
+  if (args.start !== undefined) payload.start = { dateTime: args.start, timeZone: TZ };
+  if (args.end !== undefined) payload.end = { dateTime: args.end, timeZone: TZ };
+  if (args.location !== undefined) payload.location = { displayName: args.location };
+  if (args.showAs !== undefined) payload.showAs = args.showAs;
+  return payload;
+}
+
+// Note: Graph treats both single-occurrences and series-masters via /me/events/{id}.
+// The agent passes the occurrence's id (for "this") or the seriesMaster's id (for "series").
+// The `occurrence` parameter is metadata for the user-facing preview only.
+function eventEndpoint(eventId: string): string {
+  return `/me/events/${encodeURIComponent(eventId)}`;
 }
 
 async function fetchCalendarView(
@@ -70,9 +98,6 @@ async function fetchCalendarView(
 }
 
 export function registerCalendarTools({ server, graphFetch, tokenStore }: RegisterOpts): void {
-  // tokenStore is wired in here so later tasks (5-7) can use it for write tools
-  void tokenStore;
-
   // ---------------------------------------------------------------------------
   // IMPORTANT: use `server.registerTool` with `inputSchema: <full ZodObject>`
   // (NOT `server.tool` with `<schema>.shape`).
@@ -232,6 +257,110 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
       return jsonResult({
         ...formatEventSummary(created),
         status: 'Event created.',
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // outlook_update_event — direct if solo, approval-gated if has attendees
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    'outlook_update_event',
+    {
+      description:
+        'Update an event. If the event has attendees, returns a previewToken; you must call outlook_confirm_update with the token after the user approves on Signal. Solo events update immediately. Recurrence: occurrence="this" (default) edits one occurrence; "series" edits the whole series.',
+      inputSchema: updateEventSchema,
+    },
+    async (args) => {
+      const fetchUrl = `/me/events/${encodeURIComponent(args.eventId)}?$select=id,subject,start,end,location,attendees,showAs,isAllDay,isOrganizer,isCancelled,type,categories`;
+      const fetchRes = await graphFetch(fetchUrl, {
+        headers: { Prefer: `outlook.timezone="${TZ}"` },
+      });
+      if (!fetchRes.ok) {
+        throw new Error(
+          `outlook_update_event fetch failed (${fetchRes.status}): ${await fetchRes.text()}`,
+        );
+      }
+      const event = (await fetchRes.json()) as GraphEvent;
+
+      if (shouldRequireApproval(event)) {
+        const previewToken = tokenStore.issue('update_with_attendees', {
+          eventId: args.eventId,
+          occurrence: args.occurrence,
+          subject: args.subject,
+          start: args.start,
+          end: args.end,
+          body: args.body,
+          location: args.location,
+          showAs: args.showAs,
+        });
+        return jsonResult({
+          previewToken,
+          event: formatEventSummary(event),
+          proposedChanges: buildUpdatePayload(args),
+          status:
+            'Event has attendees — show the proposed changes to the user on Signal and call outlook_confirm_update with the previewToken after explicit approval.',
+        });
+      }
+
+      // Solo event — patch directly
+      const patchRes = await graphFetch(eventEndpoint(args.eventId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildUpdatePayload(args)),
+      });
+      if (!patchRes.ok) {
+        throw new Error(
+          `outlook_update_event PATCH failed (${patchRes.status}): ${await patchRes.text()}`,
+        );
+      }
+      const updated = (await patchRes.json()) as GraphEvent;
+      return jsonResult({
+        ...formatEventSummary(updated),
+        status: 'Event updated.',
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // outlook_confirm_update — commit a previously approved attendee-event update
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    'outlook_confirm_update',
+    {
+      description:
+        'Commit an attendee-event update after the user has approved the previewToken on Signal. Only call this with a token returned from outlook_update_event.',
+      inputSchema: confirmTokenSchema,
+    },
+    async (args) => {
+      const action = tokenStore.verifyAndConsume(args.previewToken);
+      if (action.kind !== 'update_with_attendees') {
+        throw new Error('previewToken is not for an update action');
+      }
+      const p = action.payload as {
+        eventId: string;
+        occurrence: 'this' | 'series';
+        subject?: string;
+        start?: string;
+        end?: string;
+        body?: string;
+        location?: string;
+        showAs?: string;
+      };
+      const patchRes = await graphFetch(eventEndpoint(p.eventId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildUpdatePayload(p)),
+      });
+      if (!patchRes.ok) {
+        throw new Error(
+          `outlook_confirm_update failed (${patchRes.status}): ${await patchRes.text()}`,
+        );
+      }
+      const updated = (await patchRes.json()) as GraphEvent;
+      return jsonResult({
+        ...formatEventSummary(updated),
+        status: 'Event updated and attendees notified.',
       });
     },
   );
