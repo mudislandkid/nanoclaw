@@ -4,6 +4,7 @@ import {
   shouldRequireApproval,
   createEventSchema,
   updateEventSchema,
+  deleteEventSchema,
   listEventsSchema,
   findFreeTimeSchema,
   respondToInviteSchema,
@@ -50,6 +51,29 @@ describe('updateEventSchema', () => {
   it('defaults occurrence to "this"', () => {
     const parsed = updateEventSchema.parse({ eventId: 'evt-1' });
     expect(parsed.occurrence).toBe('this');
+  });
+
+  it('rejects payloads with an attendees field (personal-only enforcement)', () => {
+    const result = updateEventSchema.safeParse({
+      eventId: 'evt-1',
+      attendees: ['someone@example.com'],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('deleteEventSchema', () => {
+  it('accepts a minimal valid payload', () => {
+    const parsed = deleteEventSchema.parse({ eventId: 'evt-1' });
+    expect(parsed.occurrence).toBe('this');
+  });
+
+  it('rejects unknown extra fields', () => {
+    const result = deleteEventSchema.safeParse({
+      eventId: 'evt-1',
+      attendees: ['someone@example.com'],
+    });
+    expect(result.success).toBe(false);
   });
 });
 

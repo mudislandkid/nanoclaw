@@ -65,21 +65,25 @@ export const createEventSchema = z
   })
   .strict();
 
-export const updateEventSchema = z.object({
-  eventId: z.string(),
-  occurrence: z.enum(['this', 'series']).default('this'),
-  subject: z.string().optional(),
-  start: z.string().optional(),
-  end: z.string().optional(),
-  body: z.string().optional(),
-  location: z.string().optional(),
-  showAs: z.enum(showAsValues).optional(),
-});
+export const updateEventSchema = z
+  .object({
+    eventId: z.string(),
+    occurrence: z.enum(['this', 'series']).default('this'),
+    subject: z.string().optional(),
+    start: z.string().optional(),
+    end: z.string().optional(),
+    body: z.string().optional(),
+    location: z.string().optional(),
+    showAs: z.enum(showAsValues).optional(),
+  })
+  .strict();
 
-export const deleteEventSchema = z.object({
-  eventId: z.string(),
-  occurrence: z.enum(['this', 'series']).default('this'),
-});
+export const deleteEventSchema = z
+  .object({
+    eventId: z.string(),
+    occurrence: z.enum(['this', 'series']).default('this'),
+  })
+  .strict();
 
 export const respondToInviteSchema = z.object({
   eventId: z.string(),
@@ -131,6 +135,21 @@ function mergeIntervals(intervals: Interval[]): Interval[] {
   return merged;
 }
 
+/**
+ * Compute free gaps in a calendar range.
+ *
+ * IMPORTANT: this function assumes all event datetimes are in UTC. Callers
+ * MUST request UTC-formatted events from the Graph API by sending
+ * `Prefer: outlook.timezone="UTC"` on the calendarView request that produces
+ * `events`. Without that header, Graph returns datetimes in the user's
+ * calendar timezone with a separate `timeZone` field, which this function
+ * does not consult — gaps would be off by the local-UTC offset.
+ *
+ * @param events events from Graph API (must be UTC-formatted)
+ * @param rangeStart ISO 8601 UTC string (with Z suffix or appended Z)
+ * @param rangeEnd ISO 8601 UTC string (with Z suffix or appended Z)
+ * @param minDurationMinutes minimum gap length to return
+ */
 export function computeFreeGaps(
   events: GraphEvent[],
   rangeStart: string,
