@@ -3,6 +3,7 @@ import {
   listEventsSchema,
   getEventSchema,
   findFreeTimeSchema,
+  createEventSchema,
   computeFreeGaps,
   formatEventSummary,
   type GraphEvent,
@@ -168,6 +169,45 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
         args.minDurationMinutes,
       );
       return jsonResult(gaps);
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // outlook_create_event — direct write (no attendees by schema)
+  // -------------------------------------------------------------------------
+  server.tool(
+    'outlook_create_event',
+    'Create an event on your calendar. Personal-only — does not support inviting other attendees. Use outlook_update_event to modify, outlook_delete_event to cancel.',
+    createEventSchema.shape,
+    async (args) => {
+      const payload = {
+        subject: args.subject,
+        body: args.body
+          ? { contentType: 'Text', content: args.body }
+          : undefined,
+        start: { dateTime: args.start, timeZone: TZ },
+        end: { dateTime: args.end, timeZone: TZ },
+        location: args.location ? { displayName: args.location } : undefined,
+        isAllDay: args.isAllDay,
+        reminderMinutesBeforeStart: args.reminderMinutesBeforeStart,
+        showAs: args.showAs,
+      };
+
+      const res = await graphFetch('/me/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        throw new Error(`outlook_create_event failed (${res.status}): ${await res.text()}`);
+      }
+
+      const created = (await res.json()) as GraphEvent;
+      return jsonResult({
+        ...formatEventSummary(created),
+        status: 'Event created.',
+      });
     },
   );
 }
