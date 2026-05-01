@@ -7,6 +7,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { registerPetTools } from './pets.js';
+import { registerVehicleTools } from './vehicles.js';
+import { registerMedicationTools } from './medications.js';
 
 const API_URL = process.env.FAMILY_HQ_API_URL || '';
 const API_SECRET = process.env.FAMILY_HQ_API_SECRET || '';
@@ -61,6 +64,29 @@ async function apiPatch(path: string, body: unknown): Promise<unknown> {
     throw new Error(`API error ${resp.status}: ${text}`);
   }
   return resp.json();
+}
+
+async function apiDelete(path: string): Promise<unknown> {
+  const resp = await fetch(`${API_URL}${path}`, {
+    method: 'DELETE',
+    headers: {
+      'X-Service-Auth': API_SECRET,
+      'Content-Type': 'application/json',
+    },
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`API error ${resp.status}: ${text}`);
+  }
+  if (resp.status === 204) return { success: true };
+  return resp.json();
+}
+
+export interface ApiHelpers {
+  apiGet: (path: string) => Promise<unknown>;
+  apiPost: (path: string, body?: unknown) => Promise<unknown>;
+  apiPatch: (path: string, body: unknown) => Promise<unknown>;
+  apiDelete: (path: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,94 +224,6 @@ server.tool(
   },
   async ({ title }) => {
     const data = await apiPost('/tasks/shopping/items', { title });
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-// --- Medications ---
-
-server.tool(
-  'medications',
-  'List all medications with their status (ok, reorder_soon, overdue, unknown), days remaining, and supply info',
-  {},
-  async () => {
-    const data = await apiGet('/health/medications');
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  'medication_reminders',
-  'Get medications that need reordering soon or are overdue',
-  {
-    days_ahead: z.number().optional().describe('How many days ahead to check (default 7)'),
-  },
-  async ({ days_ahead }) => {
-    const da = days_ahead ?? 7;
-    const data = await apiGet(`/health/medications/reminders?days_ahead=${da}`);
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  'collect_medication',
-  'Log that a medication prescription has been collected/picked up. Resets the supply countdown.',
-  {
-    medication_id: z.string().describe('Medication ID'),
-    date: z.string().optional().describe('Collection date YYYY-MM-DD (defaults to today)'),
-  },
-  async ({ medication_id, date }) => {
-    const data = await apiPost(`/health/medications/${medication_id}/collect`, { date: date ?? null });
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-// --- Pets ---
-
-server.tool(
-  'pets',
-  'List all pets with their details',
-  {},
-  async () => {
-    const data = await apiGet('/pets');
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  'pet_reminders',
-  'Get upcoming pet care reminders (vaccinations, flea treatments, vet visits, etc.)',
-  {
-    days_ahead: z.number().optional().describe('How many days ahead to check (default 30)'),
-  },
-  async ({ days_ahead }) => {
-    const da = days_ahead ?? 30;
-    const data = await apiGet(`/pets/reminders?days_ahead=${da}`);
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-// --- Vehicles ---
-
-server.tool(
-  'vehicles',
-  'List all vehicles with MOT, tax, and insurance dates',
-  {},
-  async () => {
-    const data = await apiGet('/vehicles');
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  },
-);
-
-server.tool(
-  'vehicle_reminders',
-  'Get upcoming vehicle reminders (MOT, tax, insurance, service due)',
-  {
-    days_ahead: z.number().optional().describe('How many days ahead to check (default 30)'),
-  },
-  async ({ days_ahead }) => {
-    const da = days_ahead ?? 30;
-    const data = await apiGet(`/vehicles/reminders?days_ahead=${da}`);
     return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
   },
 );
@@ -459,6 +397,13 @@ server.tool(
     return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
   },
 );
+
+// --- Resource modules (extracted to keep this file under 500 lines) ---
+
+const helpers: ApiHelpers = { apiGet, apiPost, apiPatch, apiDelete };
+registerPetTools(server, helpers);
+registerVehicleTools(server, helpers);
+registerMedicationTools(server, helpers);
 
 // ---------------------------------------------------------------------------
 // Start
