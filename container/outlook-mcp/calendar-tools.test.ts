@@ -91,12 +91,16 @@ describe('calendar-tools MCP boundary', () => {
 
   it('registers all calendar tools', () => {
     expect(Object.keys(tools).sort()).toEqual([
+      'outlook_confirm_delete',
+      'outlook_confirm_invite_response',
       'outlook_confirm_update',
       'outlook_create_event',
+      'outlook_delete_event',
       'outlook_find_free_time',
       'outlook_get_event',
       'outlook_list_calendars',
       'outlook_list_events',
+      'outlook_respond_to_invite',
       'outlook_update_event',
     ]);
   });
@@ -335,5 +339,225 @@ describe('outlook_confirm_update', () => {
     const payload = JSON.parse(result.content[0].text);
     expect(payload.status).toBe('Event updated and attendees notified.');
     expect(calls.filter((c) => c.startsWith('PATCH'))).toHaveLength(1);
+  });
+});
+
+describe('outlook_delete_event', () => {
+  it('REJECTS unknown fields at the MCP boundary', async () => {
+    const { internal, tools } = setupServer();
+    await expect(
+      internal.validateToolInput(
+        tools.outlook_delete_event,
+        { eventId: 'evt-1', sendInvites: true },
+        'outlook_delete_event',
+      ),
+    ).rejects.toThrow(/sendInvites/);
+  });
+
+  it('returns a previewToken without issuing DELETE', async () => {
+    const calls: string[] = [];
+    const graphFetch: GraphFetch = async (url, options) => {
+      const method = options?.method ?? 'GET';
+      calls.push(`${method} ${url}`);
+      if (method === 'GET') {
+        return jsonResponse({
+          id: 'evt-1',
+          subject: 'Standup',
+          start: { dateTime: '2026-05-02T09:00:00', timeZone: 'UTC' },
+          end: { dateTime: '2026-05-02T09:15:00', timeZone: 'UTC' },
+          showAs: 'busy',
+          attendees: [],
+          isAllDay: false,
+          isOrganizer: true,
+          isCancelled: false,
+          type: 'singleInstance',
+          categories: [],
+        });
+      }
+      throw new Error(`Unexpected: ${method} ${url}`);
+    };
+
+    const { internal, tools } = setupServer(graphFetch);
+    const result = (await callTool(internal, tools, 'outlook_delete_event', {
+      eventId: 'evt-1',
+    })) as { content: Array<{ text: string }> };
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.previewToken).toMatch(/^[0-9a-f]+\.[0-9a-f]+$/);
+    expect(payload.occurrence).toBe('this');
+    expect(payload.status).toMatch(/This occurrence will be deleted/);
+    expect(calls.filter((c) => c.startsWith('DELETE'))).toHaveLength(0);
+  });
+
+  it('warns about WHOLE SERIES when occurrence=series', async () => {
+    const graphFetch: GraphFetch = async () =>
+      jsonResponse({
+        id: 'evt-1',
+        subject: 'Weekly sync',
+        start: { dateTime: '2026-05-02T09:00:00', timeZone: 'UTC' },
+        end: { dateTime: '2026-05-02T09:30:00', timeZone: 'UTC' },
+        showAs: 'busy',
+        attendees: [],
+        isAllDay: false,
+        isOrganizer: true,
+        isCancelled: false,
+        type: 'seriesMaster',
+        categories: [],
+      });
+
+    const { internal, tools } = setupServer(graphFetch);
+    const result = (await callTool(internal, tools, 'outlook_delete_event', {
+      eventId: 'evt-1',
+      occurrence: 'series',
+    })) as { content: Array<{ text: string }> };
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.status).toMatch(/WHOLE SERIES/);
+  });
+});
+
+describe('outlook_confirm_delete', () => {
+  it('REJECTS unknown fields at the MCP boundary', async () => {
+    const { internal, tools } = setupServer();
+    await expect(
+      internal.validateToolInput(
+        tools.outlook_confirm_delete,
+        { previewToken: 'a.b', extra: 1 },
+        'outlook_confirm_delete',
+      ),
+    ).rejects.toThrow(/extra/);
+  });
+
+  it('rejects a non-delete-kind token', async () => {
+    const { internal, tools, tokenStore } = setupServer();
+    const wrong = tokenStore.issue('invite_response', {
+      eventId: 'evt-1',
+      response: 'accept',
+      sendResponse: true,
+    });
+    await expect(
+      callTool(internal, tools, 'outlook_confirm_delete', { previewToken: wrong }),
+    ).rejects.toThrow(/not for a delete action/);
+  });
+
+  it('issues DELETE on a valid token (treats 204 as success)', async () => {
+    const calls: string[] = [];
+    const graphFetch: GraphFetch = async (url, options) => {
+      const method = options?.method ?? 'GET';
+      calls.push(`${method} ${url}`);
+      if (method === 'DELETE') return new Response(null, { status: 204 });
+      throw new Error(`Unexpected: ${method} ${url}`);
+    };
+
+    const { internal, tools, tokenStore } = setupServer(graphFetch);
+    const token = tokenStore.issue('delete', {
+      eventId: 'evt-1',
+      occurrence: 'this',
+    });
+    const result = (await callTool(internal, tools, 'outlook_confirm_delete', {
+      previewToken: token,
+    })) as { content: Array<{ text: string }> };
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.status).toBe('Event deleted.');
+    expect(calls.filter((c) => c.startsWith('DELETE'))).toHaveLength(1);
+  });
+});
+
+describe('outlook_respond_to_invite', () => {
+  it('REJECTS unknown fields at the MCP boundary', async () => {
+    const { internal, tools } = setupServer();
+    await expect(
+      internal.validateToolInput(
+        tools.outlook_respond_to_invite,
+        {
+          eventId: 'evt-1',
+          response: 'accept',
+          extra: 1,
+        },
+        'outlook_respond_to_invite',
+      ),
+    ).rejects.toThrow(/extra/);
+  });
+
+  it('returns a previewToken without sending the RSVP', async () => {
+    const calls: string[] = [];
+    const graphFetch: GraphFetch = async (url, options) => {
+      const method = options?.method ?? 'GET';
+      calls.push(`${method} ${url}`);
+      if (method === 'GET') {
+        return jsonResponse({
+          id: 'evt-1',
+          subject: 'Lunch',
+          start: { dateTime: '2026-05-02T12:00:00', timeZone: 'UTC' },
+          end: { dateTime: '2026-05-02T13:00:00', timeZone: 'UTC' },
+          showAs: 'busy',
+          attendees: [{ emailAddress: { address: 'organizer@x.com' } }],
+          isAllDay: false,
+          isOrganizer: false,
+          isCancelled: false,
+          type: 'singleInstance',
+          categories: [],
+        });
+      }
+      throw new Error(`Unexpected: ${method} ${url}`);
+    };
+
+    const { internal, tools } = setupServer(graphFetch);
+    const result = (await callTool(internal, tools, 'outlook_respond_to_invite', {
+      eventId: 'evt-1',
+      response: 'accept',
+    })) as { content: Array<{ text: string }> };
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.previewToken).toMatch(/^[0-9a-f]+\.[0-9a-f]+$/);
+    expect(payload.proposedResponse).toBe('accept');
+    expect(payload.sendResponse).toBe(true);
+    expect(calls.filter((c) => c.startsWith('POST'))).toHaveLength(0);
+  });
+});
+
+describe('outlook_confirm_invite_response', () => {
+  it('rejects a non-invite_response-kind token', async () => {
+    const { internal, tools, tokenStore } = setupServer();
+    const wrong = tokenStore.issue('delete', { eventId: 'evt-1', occurrence: 'this' });
+    await expect(
+      callTool(internal, tools, 'outlook_confirm_invite_response', {
+        previewToken: wrong,
+      }),
+    ).rejects.toThrow(/not for an invite response/);
+  });
+
+  it('POSTs to /me/events/<id>/<response> with comment + sendResponse', async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    const graphFetch: GraphFetch = async (url, options) => {
+      if ((options?.method ?? 'GET') === 'POST') {
+        calls.push({ url, body: String(options?.body ?? '') });
+        return new Response(null, { status: 202 });
+      }
+      throw new Error(`Unexpected: ${options?.method} ${url}`);
+    };
+
+    const { internal, tools, tokenStore } = setupServer(graphFetch);
+    const token = tokenStore.issue('invite_response', {
+      eventId: 'evt-1',
+      response: 'tentativelyAccept',
+      comment: 'Maybe!',
+      sendResponse: true,
+    });
+    const result = (await callTool(
+      internal,
+      tools,
+      'outlook_confirm_invite_response',
+      { previewToken: token },
+    )) as { content: Array<{ text: string }> };
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.status).toBe('RSVP sent.');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toMatch(/\/me\/events\/evt-1\/tentativelyAccept$/);
+    const sent = JSON.parse(calls[0].body);
+    expect(sent.comment).toBe('Maybe!');
+    expect(sent.sendResponse).toBe(true);
   });
 });

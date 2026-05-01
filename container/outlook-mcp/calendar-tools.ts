@@ -5,6 +5,8 @@ import {
   findFreeTimeSchema,
   createEventSchema,
   updateEventSchema,
+  deleteEventSchema,
+  respondToInviteSchema,
   confirmTokenSchema,
   computeFreeGaps,
   formatEventSummary,
@@ -361,6 +363,162 @@ export function registerCalendarTools({ server, graphFetch, tokenStore }: Regist
       return jsonResult({
         ...formatEventSummary(updated),
         status: 'Event updated and attendees notified.',
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // outlook_delete_event — always approval-gated
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    'outlook_delete_event',
+    {
+      description:
+        'Delete an event. Returns a previewToken — you must show the event details to the user on Signal and call outlook_confirm_delete with the token after explicit approval. Default occurrence is "this" (one occurrence); "series" deletes the whole recurring series.',
+      inputSchema: deleteEventSchema,
+    },
+    async (args) => {
+      const fetchUrl = `/me/events/${encodeURIComponent(args.eventId)}?$select=id,subject,start,end,location,attendees,showAs,isAllDay,isOrganizer,isCancelled,type,categories`;
+      const fetchRes = await graphFetch(fetchUrl, {
+        headers: { Prefer: `outlook.timezone="${TZ}"` },
+      });
+      if (!fetchRes.ok) {
+        throw new Error(
+          `outlook_delete_event fetch failed (${fetchRes.status}): ${await fetchRes.text()}`,
+        );
+      }
+      const event = (await fetchRes.json()) as GraphEvent;
+
+      const previewToken = tokenStore.issue('delete', {
+        eventId: args.eventId,
+        occurrence: args.occurrence,
+      });
+      return jsonResult({
+        previewToken,
+        event: formatEventSummary(event),
+        occurrence: args.occurrence,
+        status:
+          args.occurrence === 'series'
+            ? 'WHOLE SERIES will be deleted. Show event to user on Signal and call outlook_confirm_delete only after explicit approval.'
+            : 'This occurrence will be deleted. Show event to user on Signal and call outlook_confirm_delete only after explicit approval.',
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // outlook_confirm_delete
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    'outlook_confirm_delete',
+    {
+      description:
+        'Commit a previously approved delete. Only call this with a previewToken from outlook_delete_event AFTER user has explicitly approved on Signal.',
+      inputSchema: confirmTokenSchema,
+    },
+    async (args) => {
+      const action = tokenStore.verifyAndConsume(args.previewToken);
+      if (action.kind !== 'delete') {
+        throw new Error('previewToken is not for a delete action');
+      }
+      const p = action.payload as {
+        eventId: string;
+        occurrence: 'this' | 'series';
+      };
+      const res = await graphFetch(`/me/events/${encodeURIComponent(p.eventId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok && res.status !== 204) {
+        throw new Error(
+          `outlook_confirm_delete failed (${res.status}): ${await res.text()}`,
+        );
+      }
+      return jsonResult({
+        eventId: p.eventId,
+        occurrence: p.occurrence,
+        status: 'Event deleted.',
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // outlook_respond_to_invite — approval-gated (sends RSVP email)
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    'outlook_respond_to_invite',
+    {
+      description:
+        'Respond to a meeting invite (accept / tentative / decline). Sends an RSVP email to the organizer if sendResponse is true. Returns a previewToken — call outlook_confirm_invite_response after the user approves on Signal.',
+      inputSchema: respondToInviteSchema,
+    },
+    async (args) => {
+      const fetchUrl = `/me/events/${encodeURIComponent(args.eventId)}?$select=id,subject,start,end,location,attendees,showAs,isAllDay,isOrganizer,isCancelled,type,categories`;
+      const fetchRes = await graphFetch(fetchUrl, {
+        headers: { Prefer: `outlook.timezone="${TZ}"` },
+      });
+      if (!fetchRes.ok) {
+        throw new Error(
+          `outlook_respond_to_invite fetch failed (${fetchRes.status}): ${await fetchRes.text()}`,
+        );
+      }
+      const event = (await fetchRes.json()) as GraphEvent;
+
+      const previewToken = tokenStore.issue('invite_response', {
+        eventId: args.eventId,
+        response: args.response,
+        comment: args.comment,
+        sendResponse: args.sendResponse,
+      });
+      return jsonResult({
+        previewToken,
+        event: formatEventSummary(event),
+        proposedResponse: args.response,
+        comment: args.comment ?? null,
+        sendResponse: args.sendResponse,
+        status:
+          'Show event + proposed response to user on Signal. Call outlook_confirm_invite_response with previewToken after explicit approval.',
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // outlook_confirm_invite_response
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    'outlook_confirm_invite_response',
+    {
+      description:
+        'Commit a previously approved RSVP. Only call this with a previewToken from outlook_respond_to_invite AFTER user has explicitly approved on Signal.',
+      inputSchema: confirmTokenSchema,
+    },
+    async (args) => {
+      const action = tokenStore.verifyAndConsume(args.previewToken);
+      if (action.kind !== 'invite_response') {
+        throw new Error('previewToken is not for an invite response');
+      }
+      const p = action.payload as {
+        eventId: string;
+        response: 'accept' | 'tentativelyAccept' | 'decline';
+        comment?: string;
+        sendResponse: boolean;
+      };
+      const path = `/me/events/${encodeURIComponent(p.eventId)}/${p.response}`;
+      const res = await graphFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          comment: p.comment ?? '',
+          sendResponse: p.sendResponse,
+        }),
+      });
+      if (!res.ok && res.status !== 202) {
+        throw new Error(
+          `outlook_confirm_invite_response failed (${res.status}): ${await res.text()}`,
+        );
+      }
+      return jsonResult({
+        eventId: p.eventId,
+        response: p.response,
+        status: 'RSVP sent.',
       });
     },
   );

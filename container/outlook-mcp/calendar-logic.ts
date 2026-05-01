@@ -85,12 +85,14 @@ export const deleteEventSchema = z
   })
   .strict();
 
-export const respondToInviteSchema = z.object({
-  eventId: z.string(),
-  response: z.enum(['accept', 'tentativelyAccept', 'decline']),
-  comment: z.string().optional(),
-  sendResponse: z.boolean().default(true),
-});
+export const respondToInviteSchema = z
+  .object({
+    eventId: z.string(),
+    response: z.enum(['accept', 'tentativelyAccept', 'decline']),
+    comment: z.string().optional(),
+    sendResponse: z.boolean().default(true),
+  })
+  .strict();
 
 export const confirmTokenSchema = z
   .object({
