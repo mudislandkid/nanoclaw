@@ -26,6 +26,10 @@ export interface AllowedRoot {
   // If true, bypasses the global nonMainReadOnly setting for this root,
   // allowing non-main groups to mount read-write (e.g., shared vault directories)
   overrideNonMainReadOnly?: boolean;
+  // When true: root is mounted RO automatically for groups with
+  // devAccessEnabled; subdirectories require their own allowlist entry
+  // with allowReadWrite:true to be writable. Used by add-developer-access.
+  requireApproval?: boolean;
   // Optional description for documentation
   description?: string;
 }
@@ -33,6 +37,10 @@ export interface AllowedRoot {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  // When true: orchestrator auto-mounts any allowlist root with
+  // requireApproval:true at /workspace/dev/ as RO. Per-project RW
+  // overlays still come from additionalMounts.
+  devAccessEnabled?: boolean;
 }
 
 export interface RegisteredGroup {
