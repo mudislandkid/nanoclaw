@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# dev-access — request/revoke/list/clone for the developer-access feature.
+# Marshals JSON IPC requests to the host orchestrator and waits for the response.
+set -euo pipefail
+
+IPC_REQ_DIR=/workspace/ipc/access-requests
+IPC_RES_DIR=/workspace/ipc/access-responses
+TIMEOUT=300  # seconds — must match host REQUEST_TIMEOUT_MS
+
+usage() {
+  cat <<EOF
+Usage: dev-access <command> [args]
+
+Commands:
+  request <project> "<reason>"   Ask for write access to a project under /workspace/dev
+  revoke  <project>              Drop write access to a project
+  list                            Show currently-writable projects
+  clone   <owner/repo>            Clone a repo from GitHub into the projects drive
+
+Hard rails (always denied, no prompt):
+  - The NanoClaw source directory itself
+  - Anything matching default secret patterns (.ssh, .env, etc.)
+
+The user will receive a Signal/etc prompt and must reply yes or no.
+You can also say "list" anytime to remind yourself what is writable.
+EOF
+}
+
+uuid() {
+  od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+submit() {
+  local payload=$1
+  local id=$2
+  mkdir -p "$IPC_REQ_DIR" "$IPC_RES_DIR"
+  echo "$payload" > "$IPC_REQ_DIR/$id.json"
+
+  local elapsed=0
+  while [ "$elapsed" -lt "$TIMEOUT" ]; do
+    if [ -f "$IPC_RES_DIR/$id.json" ]; then
+      cat "$IPC_RES_DIR/$id.json"
+      rm -f "$IPC_RES_DIR/$id.json"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed+1))
+  done
+
+  echo '{"status":"timeout","message":"No response after 5 minutes"}'
+  return 1
+}
+
+cmd=${1:-}
+case "$cmd" in
+  request)
+    project=${2:-}
+    reason=${3:-}
+    [ -z "$project" ] && { usage; exit 2; }
+    id=$(uuid)
+    submit "$(jq -n --arg id "$id" --arg project "$project" --arg reason "$reason" \
+             --arg ts "$(date -u +%FT%TZ)" \
+             '{id:$id, command:"request", project:$project, reason:$reason, requestedAt:$ts}')" "$id"
+    ;;
+  revoke)
+    project=${2:-}
+    [ -z "$project" ] && { usage; exit 2; }
+    id=$(uuid)
+    submit "$(jq -n --arg id "$id" --arg project "$project" \
+             --arg ts "$(date -u +%FT%TZ)" \
+             '{id:$id, command:"revoke", project:$project, requestedAt:$ts}')" "$id"
+    ;;
+  list)
+    id=$(uuid)
+    submit "$(jq -n --arg id "$id" --arg ts "$(date -u +%FT%TZ)" \
+             '{id:$id, command:"list", requestedAt:$ts}')" "$id"
+    ;;
+  clone)
+    spec=${2:-}
+    [ -z "$spec" ] && { usage; exit 2; }
+    owner=${spec%%/*}
+    project=${spec##*/}
+    id=$(uuid)
+    submit "$(jq -n --arg id "$id" --arg project "$project" --arg owner "$owner" \
+             --arg ts "$(date -u +%FT%TZ)" \
+             '{id:$id, command:"clone", project:$project, owner:$owner, requestedAt:$ts}')" "$id"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
