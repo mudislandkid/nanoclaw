@@ -13,6 +13,7 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   CREDENTIAL_PROXY_PORT,
+  DANGEROUS_COMMANDS_PATH,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
@@ -177,6 +178,21 @@ export function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+
+  // dev-access IPC dirs + dangerous-commands config copy
+  if (group.containerConfig?.devAccessEnabled) {
+    fs.mkdirSync(path.join(groupIpcDir, 'access-requests'), { recursive: true });
+    fs.mkdirSync(path.join(groupIpcDir, 'access-responses'), { recursive: true });
+    fs.mkdirSync(path.join(groupIpcDir, 'dangerous-commands'), { recursive: true });
+    fs.mkdirSync(path.join(groupIpcDir, 'dangerous-responses'), { recursive: true });
+    if (fs.existsSync(DANGEROUS_COMMANDS_PATH)) {
+      fs.copyFileSync(
+        DANGEROUS_COMMANDS_PATH,
+        path.join(groupIpcDir, 'dangerous-commands.json'),
+      );
+    }
+  }
+
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',

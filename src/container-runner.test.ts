@@ -15,6 +15,7 @@ vi.mock('./config.js', () => ({
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
   CREDENTIAL_PROXY_PORT: 3001,
+  DANGEROUS_COMMANDS_PATH: '/nonexistent/dangerous-commands.json',
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
@@ -233,6 +234,7 @@ describe('container-runner: devAccessEnabled auto RO root mount', () => {
       CONTAINER_MAX_OUTPUT_SIZE: 10485760,
       CONTAINER_TIMEOUT: 1800000,
       CREDENTIAL_PROXY_PORT: 3001,
+      DANGEROUS_COMMANDS_PATH: '/nonexistent/dangerous-commands.json',
       DATA_DIR: path.join(os.tmpdir(), 'nanoclaw-dev-test-data'),
       GROUPS_DIR: path.join(os.tmpdir(), 'nanoclaw-dev-test-groups'),
       IDLE_TIMEOUT: 1800000,
@@ -396,7 +398,9 @@ describe('container-runner: devAccessEnabled auto RO root mount', () => {
     const mounts = mod.buildVolumeMounts(group, true);
 
     // Only the first requireApproval root should produce a /workspace/dev mount
-    const devMounts = mounts.filter((m) => m.containerPath === '/workspace/dev');
+    const devMounts = mounts.filter(
+      (m) => m.containerPath === '/workspace/dev',
+    );
     expect(devMounts).toHaveLength(1);
     expect(devMounts[0].hostPath).toBe(devTestDir);
   });
@@ -427,7 +431,9 @@ describe('container-runner: devAccessEnabled auto RO root mount', () => {
     const mod = await import('./container-runner.js');
     const mounts = mod.buildVolumeMounts(group, true);
 
-    const devMounts = mounts.filter((m) => m.containerPath === '/workspace/dev');
+    const devMounts = mounts.filter(
+      (m) => m.containerPath === '/workspace/dev',
+    );
     expect(devMounts).toHaveLength(0);
   });
 });
