@@ -2,6 +2,10 @@ export interface AdditionalMount {
   hostPath: string; // Absolute path on host (supports ~ for home)
   containerPath?: string; // Optional — defaults to basename of hostPath. Mounted at /workspace/extra/{value}
   readonly?: boolean; // Default: true for safety
+  // When true: mount lands at /workspace/dev/{containerPath} instead of
+  // /workspace/extra/{containerPath}. Used by the developer-access feature
+  // to overlay per-project RW mounts onto the read-only /workspace/dev/ root.
+  devOverlay?: boolean;
 }
 
 /**

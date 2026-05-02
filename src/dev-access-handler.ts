@@ -136,7 +136,10 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     try {
       req = JSON.parse(raw);
     } catch (err) {
-      logger.warn({ filePath, err }, 'dev-access: failed to parse request file');
+      logger.warn(
+        { filePath, err },
+        'dev-access: failed to parse request file',
+      );
       return;
     }
 
@@ -244,7 +247,7 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     if (req.command === 'clone') {
       const repoRef = req.owner
         ? `${req.owner}/${req.project}`
-        : req.project ?? '(unknown)';
+        : (req.project ?? '(unknown)');
       return `Andy wants to clone ${repoRef} into your projects drive. Reply yes/no.`;
     }
     return `Andy sent an access request: ${JSON.stringify(req)}. Reply yes/no.`;
@@ -306,9 +309,7 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
         for (const groupFolder of groupFolders) {
           const dir = getRequestsDir(groupFolder);
           if (!fs.existsSync(dir)) continue;
-          const files = fs
-            .readdirSync(dir)
-            .filter((f) => f.endsWith('.json'));
+          const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
           for (const file of files) {
             await processRequestFile(groupFolder, path.join(dir, file));
           }
@@ -372,11 +373,7 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
         message: 'clone-and-mount queued; orchestrator will run gh repo clone',
         details: {
           project: req.project,
-          // NOTE(DONE_WITH_CONCERNS): containerPath will resolve to
-          // /workspace/extra/dev/<project> via validateAdditionalMounts, not
-          // /workspace/dev/<project>. Task 14.1 needs to allow per-mount path
-          // override in mount-security.ts to support overlay semantics.
-          mountPath: `/workspace/extra/dev/${req.project}`,
+          mountPath: `/workspace/dev/${req.project}`,
         },
       });
       appendAuditEntry(auditPath(req.groupFolder), {
@@ -418,8 +415,7 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
       message: `Granted write access to ${req.project}. Tell Greg to ping you to retry.`,
       details: {
         project: req.project,
-        // NOTE(DONE_WITH_CONCERNS): same as above — see Task 14.1.
-        mountPath: `/workspace/extra/dev/${req.project}`,
+        mountPath: `/workspace/dev/${req.project}`,
       },
     });
     appendAuditEntry(auditPath(req.groupFolder), {
@@ -457,14 +453,11 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
   // ---------------------------------------------------------------------------
 
   /**
-   * Add an additionalMount entry (containerPath: dev/<name>) to the group's
-   * containerConfig and persist via deps.updateGroupConfig().
-   *
-   * DONE_WITH_CONCERNS: validateAdditionalMounts in mount-security.ts prefixes
-   * containerPath with /workspace/extra/, so the effective container mount will
-   * be /workspace/extra/dev/<name> rather than /workspace/dev/<name>. Task 14.1
-   * or a follow-up must add a per-mount path override mechanism to achieve the
-   * intended overlay at /workspace/dev/<name>.
+   * Add an additionalMount entry to the group's containerConfig and persist
+   * via deps.updateGroupConfig(). The devOverlay flag causes mount-security to
+   * place the mount at /workspace/dev/{containerName} instead of
+   * /workspace/extra/{containerName}, achieving RW overlay semantics over the
+   * read-only /workspace/dev/ root mount.
    */
   function registerMountInGroup(
     groupFolder: string,
@@ -472,7 +465,9 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     containerName: string,
   ): void {
     const groups = deps.getRegisteredGroups();
-    const entry = Object.entries(groups).find(([, g]) => g.folder === groupFolder);
+    const entry = Object.entries(groups).find(
+      ([, g]) => g.folder === groupFolder,
+    );
     if (!entry) {
       logger.warn(
         { groupFolder },
@@ -483,9 +478,8 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     const [jid, group] = entry;
     const config = group.containerConfig ?? {};
     const mounts = [...(config.additionalMounts ?? [])];
-    const containerPath = `dev/${containerName}`;
-    if (mounts.some((m) => m.containerPath === containerPath)) return;
-    mounts.push({ hostPath, containerPath, readonly: false });
+    if (mounts.some((m) => m.containerPath === containerName && m.devOverlay)) return;
+    mounts.push({ hostPath, containerPath: containerName, readonly: false, devOverlay: true });
     const updated: RegisteredGroup = {
       ...group,
       containerConfig: { ...config, additionalMounts: mounts },
@@ -495,7 +489,9 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
 
   function unregisterMountInGroup(groupFolder: string, hostPath: string): void {
     const groups = deps.getRegisteredGroups();
-    const entry = Object.entries(groups).find(([, g]) => g.folder === groupFolder);
+    const entry = Object.entries(groups).find(
+      ([, g]) => g.folder === groupFolder,
+    );
     if (!entry) return;
     const [jid, group] = entry;
     const config = group.containerConfig;

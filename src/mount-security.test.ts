@@ -211,3 +211,69 @@ describe('mount-security: requireApproval roots', () => {
     expect(result.effectiveReadonly).toBe(true);
   });
 });
+
+describe('mount-security: devOverlay flag', () => {
+  beforeEach(() => {
+    fs.mkdirSync(testDir, { recursive: true });
+    fs.mkdirSync(configDir, { recursive: true });
+    vi.resetModules();
+    vi.doMock('./config.js', () => ({
+      MOUNT_ALLOWLIST_PATH: allowlistPath,
+    }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(testDir, { recursive: true, force: true });
+    fs.rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it('places devOverlay:true mounts at /workspace/dev/<name>', async () => {
+    const allowlist = {
+      allowedRoots: [
+        { path: testDir, allowReadWrite: true, overrideNonMainReadOnly: true },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(allowlist));
+
+    const mod = await import('./mount-security.js');
+    const mounts = mod.validateAdditionalMounts(
+      [
+        {
+          hostPath: testDir,
+          containerPath: 'VoltWise',
+          readonly: false,
+          devOverlay: true,
+        },
+      ],
+      'main',
+      true,
+    );
+
+    expect(mounts).toHaveLength(1);
+    expect(mounts[0].containerPath).toBe('/workspace/dev/VoltWise');
+    expect(mounts[0].readonly).toBe(false);
+  });
+
+  it('places mounts without devOverlay at /workspace/extra/<name>', async () => {
+    const allowlist = {
+      allowedRoots: [
+        { path: testDir, allowReadWrite: true, overrideNonMainReadOnly: true },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(allowlist));
+
+    const mod = await import('./mount-security.js');
+    const mounts = mod.validateAdditionalMounts(
+      [{ hostPath: testDir, containerPath: 'second-brain', readonly: false }],
+      'main',
+      true,
+    );
+
+    expect(mounts).toHaveLength(1);
+    expect(mounts[0].containerPath).toBe('/workspace/extra/second-brain');
+  });
+});

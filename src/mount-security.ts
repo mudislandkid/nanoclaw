@@ -373,9 +373,10 @@ export function validateAdditionalMounts(
     const result = validateMount(mount, isMain);
 
     if (result.allowed) {
+      const prefix = mount.devOverlay ? '/workspace/dev' : '/workspace/extra';
       validatedMounts.push({
         hostPath: result.realHostPath!,
-        containerPath: `/workspace/extra/${result.resolvedContainerPath}`,
+        containerPath: `${prefix}/${result.resolvedContainerPath}`,
         readonly: result.effectiveReadonly!,
       });
 
