@@ -14,7 +14,11 @@ vi.mock('./config.js', () => ({
   DATA_DIR: path.join(tmpRoot, 'data'),
   GROUPS_DIR: groupsDir,
   IPC_POLL_INTERVAL: 50,
-  DANGEROUS_COMMANDS_PATH: path.join(tmpRoot, 'config', 'dangerous-commands.json'),
+  DANGEROUS_COMMANDS_PATH: path.join(
+    tmpRoot,
+    'config',
+    'dangerous-commands.json',
+  ),
 }));
 
 describe('dev-access-handler: end-to-end request flow', () => {
@@ -125,6 +129,171 @@ describe('dev-access-handler: end-to-end request flow', () => {
     expect(fs.existsSync(responseFile)).toBe(true);
     const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
     expect(response.status).toBe('blocked');
+
+    handler.stop();
+  });
+});
+
+describe('dev-access-handler: clone flow', () => {
+  beforeEach(() => {
+    fs.mkdirSync(path.join(ipcDir, 'access-requests'), { recursive: true });
+    fs.mkdirSync(path.join(ipcDir, 'access-responses'), { recursive: true });
+    fs.mkdirSync(path.join(groupsDir, 'main'), { recursive: true });
+    fs.mkdirSync(path.dirname(allowlistPath), { recursive: true });
+    fs.writeFileSync(
+      allowlistPath,
+      JSON.stringify({
+        allowedRoots: [
+          { path: tmpRoot, allowReadWrite: false, requireApproval: true },
+        ],
+        blockedPatterns: [],
+        nonMainReadOnly: true,
+      }),
+    );
+    sentMessages.length = 0;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('runs cloneRepo on approved clone, then registers mount', async () => {
+    const { startDevAccessHandler } = await import('./dev-access-handler.js');
+
+    const cloneCalls: Array<{ owner: string; project: string; dest: string }> =
+      [];
+    const updateGroupConfigCalls: Array<{ jid: string; group: object }> = [];
+
+    const handler = startDevAccessHandler({
+      sendMessage: async (jid, text) => { sentMessages.push({ jid, text }); },
+      getMainGroup: () => ({
+        jid: 'main-jid',
+        folder: 'main',
+        name: 'Main',
+        trigger: '@andy',
+        added_at: '',
+        isMain: true,
+        containerConfig: { devAccessEnabled: true },
+      }),
+      getRegisteredGroups: () => ({
+        'main-jid': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andy',
+          added_at: '',
+          isMain: true,
+          containerConfig: { devAccessEnabled: true },
+        },
+      }),
+      updateGroupConfig: (jid, group) =>
+        updateGroupConfigCalls.push({ jid, group }),
+      nanoclawDir: '/tmp/nope',
+      cloneRepo: async (owner, project, destPath) => {
+        cloneCalls.push({ owner, project, dest: destPath });
+        // Simulate the clone creating the directory
+        fs.mkdirSync(destPath, { recursive: true });
+      },
+    });
+
+    fs.writeFileSync(
+      path.join(ipcDir, 'access-requests', 'c1.json'),
+      JSON.stringify({
+        id: 'c1',
+        command: 'clone',
+        project: 'newrepo',
+        owner: 'mudislandkid',
+        requestedAt: new Date().toISOString(),
+      }),
+    );
+
+    await new Promise((r) => setTimeout(r, 200));
+    await handler.tryConsumeReply('main', 'yes');
+    await new Promise((r) => setTimeout(r, 100));
+
+    // cloneRepo was invoked with the right args
+    expect(cloneCalls).toHaveLength(1);
+    expect(cloneCalls[0].owner).toBe('mudislandkid');
+    expect(cloneCalls[0].project).toBe('newrepo');
+
+    // Mount was registered
+    expect(updateGroupConfigCalls).toHaveLength(1);
+    const additionalMounts =
+      (updateGroupConfigCalls[0].group as { containerConfig?: { additionalMounts?: unknown[] } })
+        .containerConfig?.additionalMounts ?? [];
+    expect(additionalMounts).toContainEqual(
+      expect.objectContaining({
+        containerPath: 'newrepo',
+        readonly: false,
+        devOverlay: true,
+      }),
+    );
+
+    // Response written with success message
+    const responseFile = path.join(ipcDir, 'access-responses', 'c1.json');
+    const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+    expect(response.status).toBe('granted');
+    expect(response.message).toMatch(/cloned/i);
+
+    handler.stop();
+  });
+
+  it('does not register mount when cloneRepo fails', async () => {
+    const { startDevAccessHandler } = await import('./dev-access-handler.js');
+
+    const updateGroupConfigCalls: Array<{ jid: string; group: object }> = [];
+
+    const handler = startDevAccessHandler({
+      sendMessage: async (jid, text) => { sentMessages.push({ jid, text }); },
+      getMainGroup: () => ({
+        jid: 'main-jid',
+        folder: 'main',
+        name: 'Main',
+        trigger: '@andy',
+        added_at: '',
+        isMain: true,
+        containerConfig: { devAccessEnabled: true },
+      }),
+      getRegisteredGroups: () => ({
+        'main-jid': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andy',
+          added_at: '',
+          isMain: true,
+          containerConfig: { devAccessEnabled: true },
+        },
+      }),
+      updateGroupConfig: (jid, group) =>
+        updateGroupConfigCalls.push({ jid, group }),
+      nanoclawDir: '/tmp/nope',
+      cloneRepo: async (_owner, _project, _destPath) => {
+        throw new Error('repo not found');
+      },
+    });
+
+    fs.writeFileSync(
+      path.join(ipcDir, 'access-requests', 'c2.json'),
+      JSON.stringify({
+        id: 'c2',
+        command: 'clone',
+        project: 'badrepo',
+        owner: 'mudislandkid',
+        requestedAt: new Date().toISOString(),
+      }),
+    );
+
+    await new Promise((r) => setTimeout(r, 200));
+    await handler.tryConsumeReply('main', 'yes');
+    await new Promise((r) => setTimeout(r, 100));
+
+    // No mount registered
+    expect(updateGroupConfigCalls).toHaveLength(0);
+
+    // Response file written with denied status
+    const responseFile = path.join(ipcDir, 'access-responses', 'c2.json');
+    const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+    expect(response.status).toBe('denied');
+    expect(response.message).toMatch(/clone/i);
 
     handler.stop();
   });

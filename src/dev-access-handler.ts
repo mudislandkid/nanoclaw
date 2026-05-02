@@ -7,10 +7,14 @@
  * registered channel. On reply, grants or denies access by mutating the mount
  * allowlist and the group's containerConfig.additionalMounts.
  */
+import { execFile as execFileCb } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
 
 import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL } from './config.js';
+
+const execFile = promisify(execFileCb);
 import { logger } from './logger.js';
 import { loadMountAllowlist } from './mount-security.js';
 import {
@@ -38,6 +42,11 @@ export interface DevAccessDeps {
   getRegisteredGroups: () => Record<string, RegisteredGroup>;
   updateGroupConfig: (jid: string, group: RegisteredGroup) => void;
   nanoclawDir: string;
+  /**
+   * Clone a GitHub repo to destPath. Defaults to `gh repo clone <owner>/<project> <destPath>`.
+   * Inject a stub in tests to avoid touching the filesystem or network.
+   */
+  cloneRepo?: (owner: string, project: string, destPath: string) => Promise<void>;
 }
 
 interface DevAccessIncomingRequest {
@@ -63,7 +72,19 @@ export interface DevAccessHandler {
   tryConsumeReply: (groupFolder: string, text: string) => Promise<boolean>;
 }
 
+/** Default clone implementation: runs `gh repo clone <owner>/<project> <destPath>`. */
+async function defaultCloneRepo(
+  owner: string,
+  project: string,
+  destPath: string,
+): Promise<void> {
+  await execFile('gh', ['repo', 'clone', `${owner}/${project}`, destPath], {
+    timeout: 5 * 60 * 1000,
+  });
+}
+
 export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
+  const cloneRepo = deps.cloneRepo ?? defaultCloneRepo;
   const queue = new PendingQueue();
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -360,8 +381,38 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     const projectPath = path.join(approvalRoot, req.project!);
 
     if (req.command === 'clone') {
-      // The orchestrator (Task 10+) will perform the actual `gh repo clone`.
-      // We pre-register the allowlist entry so it's ready after clone completes.
+      const alreadyExists = fs.existsSync(projectPath);
+      if (!alreadyExists) {
+        const owner = req.owner ?? 'unknown';
+        try {
+          await cloneRepo(owner, req.project!, projectPath);
+          logger.info(
+            { owner, project: req.project, projectPath },
+            'dev-access: gh repo clone succeeded',
+          );
+        } catch (err: unknown) {
+          const cloneError =
+            err instanceof Error ? err.message : String(err);
+          logger.warn(
+            { owner, project: req.project, cloneError },
+            'dev-access: gh repo clone failed',
+          );
+          appendAuditEntry(auditPath(req.groupFolder), {
+            timestamp: new Date().toISOString(),
+            action: 'request-blocked',
+            project: req.project,
+            source: 'signal-reply',
+            details: { command: 'clone', cloneError },
+          });
+          writeResponse(req.groupFolder, req.id, {
+            id: req.id,
+            status: 'denied',
+            message: `Clone of ${owner}/${req.project} failed: ${cloneError}`,
+          });
+          return;
+        }
+      }
+
       addSubdirEntry({
         path: projectPath,
         description: `Granted via dev-access clone on ${new Date().toISOString().slice(0, 10)}`,
@@ -370,7 +421,7 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
       writeResponse(req.groupFolder, req.id, {
         id: req.id,
         status: 'granted',
-        message: 'clone-and-mount queued; orchestrator will run gh repo clone',
+        message: `Cloned ${req.owner ?? 'unknown'}/${req.project} and granted write access. Tell Greg to ping you to retry on the next message.`,
         details: {
           project: req.project,
           mountPath: `/workspace/dev/${req.project}`,
@@ -381,7 +432,7 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
         action: 'clone',
         project: req.project,
         source: 'signal-reply',
-        details: { owner: req.owner },
+        details: { owner: req.owner, cloned: !alreadyExists },
       });
       return;
     }
@@ -478,8 +529,14 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     const [jid, group] = entry;
     const config = group.containerConfig ?? {};
     const mounts = [...(config.additionalMounts ?? [])];
-    if (mounts.some((m) => m.containerPath === containerName && m.devOverlay)) return;
-    mounts.push({ hostPath, containerPath: containerName, readonly: false, devOverlay: true });
+    if (mounts.some((m) => m.containerPath === containerName && m.devOverlay))
+      return;
+    mounts.push({
+      hostPath,
+      containerPath: containerName,
+      readonly: false,
+      devOverlay: true,
+    });
     const updated: RegisteredGroup = {
       ...group,
       containerConfig: { ...config, additionalMounts: mounts },
