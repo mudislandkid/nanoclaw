@@ -17,6 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { createDestructiveHook } from './destructive-hook.js';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -488,6 +489,7 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreToolUse: [{ hooks: [createDestructiveHook()] }],
       },
     }
   })) {
