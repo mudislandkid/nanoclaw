@@ -14,6 +14,7 @@ describe('classifyReply', () => {
     expect(classifyReply('go ahead').decision).toBe('affirmative');
     expect(classifyReply('grant').decision).toBe('affirmative');
     expect(classifyReply('allow').decision).toBe('affirmative');
+    expect(classifyReply('approve').decision).toBe('affirmative');
     expect(classifyReply('👍').decision).toBe('affirmative');
   });
 
