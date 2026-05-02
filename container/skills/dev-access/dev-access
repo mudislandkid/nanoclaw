@@ -40,7 +40,7 @@ submit() {
   while [ "$elapsed" -lt "$TIMEOUT" ]; do
     if [ -f "$IPC_RES_DIR/$id.json" ]; then
       cat "$IPC_RES_DIR/$id.json"
-      rm -f "$IPC_RES_DIR/$id.json"
+      rm -f "$IPC_RES_DIR/$id.json" 2>/dev/null || true
       return 0
     fi
     sleep 1

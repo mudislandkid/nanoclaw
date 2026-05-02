@@ -331,6 +331,32 @@ describe('container-runner: devAccessEnabled auto RO root mount', () => {
     expect(devMount).toBeDefined();
     expect(devMount!.readonly).toBe(true);
     expect(devMount!.hostPath).toBe(devTestDir);
+
+    // C2: RO overlay mounts for response dirs must also be present and appear
+    // AFTER the parent /workspace/ipc RW mount so child overlays take effect.
+    const accessResMount = mounts.find(
+      (m) => m.containerPath === '/workspace/ipc/access-responses',
+    );
+    const dangerousResMount = mounts.find(
+      (m) => m.containerPath === '/workspace/ipc/dangerous-responses',
+    );
+    expect(accessResMount).toBeDefined();
+    expect(accessResMount!.readonly).toBe(true);
+    expect(dangerousResMount).toBeDefined();
+    expect(dangerousResMount!.readonly).toBe(true);
+
+    // Verify ordering: parent RW ipc mount comes before the RO overlays
+    const ipcMountIdx = mounts.findIndex(
+      (m) => m.containerPath === '/workspace/ipc',
+    );
+    const accessResMountIdx = mounts.findIndex(
+      (m) => m.containerPath === '/workspace/ipc/access-responses',
+    );
+    const dangerousResMountIdx = mounts.findIndex(
+      (m) => m.containerPath === '/workspace/ipc/dangerous-responses',
+    );
+    expect(accessResMountIdx).toBeGreaterThan(ipcMountIdx);
+    expect(dangerousResMountIdx).toBeGreaterThan(ipcMountIdx);
   });
 
   it('does not add the auto RO mount when devAccessEnabled is false', async () => {
@@ -361,6 +387,16 @@ describe('container-runner: devAccessEnabled auto RO root mount', () => {
 
     const devMount = mounts.find((m) => m.containerPath === '/workspace/dev');
     expect(devMount).toBeUndefined();
+
+    // C2: RO response dir overlays must also be absent when devAccessEnabled=false
+    const accessResMount = mounts.find(
+      (m) => m.containerPath === '/workspace/ipc/access-responses',
+    );
+    const dangerousResMount = mounts.find(
+      (m) => m.containerPath === '/workspace/ipc/dangerous-responses',
+    );
+    expect(accessResMount).toBeUndefined();
+    expect(dangerousResMount).toBeUndefined();
   });
 
   it('mounts only the first requireApproval root when multiple exist', async () => {

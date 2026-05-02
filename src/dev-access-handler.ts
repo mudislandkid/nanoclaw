@@ -278,7 +278,10 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     try {
       req = JSON.parse(raw);
     } catch (err) {
-      logger.warn({ err, filePath }, 'Failed to parse dangerous-command request');
+      logger.warn(
+        { err, filePath },
+        'Failed to parse dangerous-command request',
+      );
       return;
     }
 
@@ -313,7 +316,10 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     try {
       await deps.sendMessage(main.jid ?? '', prompt);
     } catch (err) {
-      logger.warn({ err, id: req.id }, 'Failed to send dangerous-command prompt');
+      logger.warn(
+        { err, id: req.id },
+        'Failed to send dangerous-command prompt',
+      );
       writeDangerousResponse(groupFolder, req.id, {
         id: req.id,
         status: 'timeout',
@@ -414,23 +420,72 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     try {
       const ipcBase = path.join(DATA_DIR, 'ipc');
       if (fs.existsSync(ipcBase)) {
+        // C3: Only process IPC dirs for groups with devAccessEnabled. This
+        // prevents stray IPC dirs from other groups (e.g., leftover from
+        // previous installs) from triggering grants against the wrong group.
+        const registeredGroups = deps.getRegisteredGroups();
+        const devAccessGroupFolders = new Set(
+          Object.values(registeredGroups)
+            .filter((g) => g.containerConfig?.devAccessEnabled)
+            .map((g) => g.folder),
+        );
+
         const groupFolders = fs
           .readdirSync(ipcBase)
-          .filter((f) => fs.statSync(path.join(ipcBase, f)).isDirectory());
+          .filter((f) => {
+            if (!devAccessGroupFolders.has(f)) return false;
+            const stat = fs.statSync(path.join(ipcBase, f));
+            return stat.isDirectory();
+          });
 
         for (const groupFolder of groupFolders) {
           const dir = getRequestsDir(groupFolder);
           if (fs.existsSync(dir)) {
-            const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+            const files = fs
+              .readdirSync(dir)
+              .filter((f) => f.endsWith('.json'));
             for (const file of files) {
               await processRequestFile(groupFolder, path.join(dir, file));
             }
           }
 
-          const dangerousDir = path.join(DATA_DIR, 'ipc', groupFolder, 'dangerous-commands');
+          const dangerousDir = path.join(
+            DATA_DIR,
+            'ipc',
+            groupFolder,
+            'dangerous-commands',
+          );
           if (fs.existsSync(dangerousDir)) {
-            for (const file of fs.readdirSync(dangerousDir).filter((f) => f.endsWith('.json'))) {
-              await processDangerousRequestFile(groupFolder, path.join(dangerousDir, file));
+            for (const file of fs
+              .readdirSync(dangerousDir)
+              .filter((f) => f.endsWith('.json'))) {
+              await processDangerousRequestFile(
+                groupFolder,
+                path.join(dangerousDir, file),
+              );
+            }
+          }
+
+          // C2: Orchestrator cleanup of response files. Response dirs are now
+          // mounted RO in the container so the container can no longer unlink
+          // them. The orchestrator removes files older than 60s — well past the
+          // point where the container should have read and acted on the response.
+          const responseCleanupCutoff = Date.now() - 60 * 1000;
+          for (const subdir of ['access-responses', 'dangerous-responses']) {
+            const resDir = path.join(DATA_DIR, 'ipc', groupFolder, subdir);
+            if (!fs.existsSync(resDir)) continue;
+            for (const file of fs
+              .readdirSync(resDir)
+              .filter((f) => f.endsWith('.json'))) {
+              const fullPath = path.join(resDir, file);
+              try {
+                const stats = fs.statSync(fullPath);
+                if (stats.mtimeMs < responseCleanupCutoff) {
+                  fs.unlinkSync(fullPath);
+                }
+              } catch {
+                /* ignore — file may have been removed concurrently */
+              }
             }
           }
         }

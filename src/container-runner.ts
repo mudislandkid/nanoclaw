@@ -181,10 +181,18 @@ export function buildVolumeMounts(
 
   // dev-access IPC dirs + dangerous-commands config copy
   if (group.containerConfig?.devAccessEnabled) {
-    fs.mkdirSync(path.join(groupIpcDir, 'access-requests'), { recursive: true });
-    fs.mkdirSync(path.join(groupIpcDir, 'access-responses'), { recursive: true });
-    fs.mkdirSync(path.join(groupIpcDir, 'dangerous-commands'), { recursive: true });
-    fs.mkdirSync(path.join(groupIpcDir, 'dangerous-responses'), { recursive: true });
+    fs.mkdirSync(path.join(groupIpcDir, 'access-requests'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(groupIpcDir, 'access-responses'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(groupIpcDir, 'dangerous-commands'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(groupIpcDir, 'dangerous-responses'), {
+      recursive: true,
+    });
     if (fs.existsSync(DANGEROUS_COMMANDS_PATH)) {
       fs.copyFileSync(
         DANGEROUS_COMMANDS_PATH,
@@ -198,6 +206,22 @@ export function buildVolumeMounts(
     containerPath: '/workspace/ipc',
     readonly: false,
   });
+
+  // Overlay response dirs as RO so the container can read but never write them.
+  // This prevents the agent from forging its own grant/approval responses.
+  // These child mounts shadow the RW parent /workspace/ipc mount above.
+  if (group.containerConfig?.devAccessEnabled) {
+    mounts.push({
+      hostPath: path.join(groupIpcDir, 'access-responses'),
+      containerPath: '/workspace/ipc/access-responses',
+      readonly: true,
+    });
+    mounts.push({
+      hostPath: path.join(groupIpcDir, 'dangerous-responses'),
+      containerPath: '/workspace/ipc/dangerous-responses',
+      readonly: true,
+    });
+  }
 
   // Copy agent-runner source into a per-group writable location so agents
   // can customize it (add tools, change behavior) without affecting other

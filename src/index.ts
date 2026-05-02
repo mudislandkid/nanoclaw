@@ -285,6 +285,45 @@ export function _setRegisteredGroups(
 }
 
 /**
+ * Filter messages through the dev-access reply interceptor.
+ * Consumed messages advance the agent cursor; the rest are returned unchanged.
+ * Returns the subset of messages that were NOT consumed by the interceptor.
+ */
+async function interceptDevAccessReplies(
+  chatJid: string,
+  group: RegisteredGroup,
+  isMainGroup: boolean,
+  messages: NewMessage[],
+): Promise<NewMessage[]> {
+  if (
+    !devAccessHandler ||
+    !isMainGroup ||
+    !devAccessHandler.hasPending(group.folder)
+  ) {
+    return messages;
+  }
+  const remaining: NewMessage[] = [];
+  for (const m of messages) {
+    if (m.is_from_me || m.is_bot_message) {
+      remaining.push(m);
+      continue;
+    }
+    const consumed = await devAccessHandler.tryConsumeReply(
+      group.folder,
+      m.content,
+    );
+    if (consumed) {
+      // Advance cursor past the consumed reply so we don't re-fetch it.
+      lastAgentTimestamp[chatJid] = m.timestamp;
+      saveState();
+    } else {
+      remaining.push(m);
+    }
+  }
+  return remaining;
+}
+
+/**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
@@ -321,35 +360,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   // Intercept dev-access yes/no replies for the main group with pending requests.
-  if (
-    devAccessHandler &&
-    isMainGroup &&
-    devAccessHandler.hasPending(group.folder)
-  ) {
-    const remaining: NewMessage[] = [];
-    for (const m of missedMessages) {
-      if (m.is_from_me || m.is_bot_message) {
-        remaining.push(m);
-        continue;
-      }
-      // tryConsumeReply returns true when the message resolves a pending request
-      // and should not be forwarded to Andy.
-      const consumed = await devAccessHandler.tryConsumeReply(
-        group.folder,
-        m.content,
-      );
-      if (consumed) {
-        // Advance cursor past the consumed reply so we don't re-fetch it.
-        lastAgentTimestamp[chatJid] = m.timestamp;
-        saveState();
-      } else {
-        remaining.push(m);
-      }
-    }
-    if (remaining.length === 0) return true; // nothing left to send to Andy
-    // Replace the array contents in place
-    missedMessages.splice(0, missedMessages.length, ...remaining);
-  }
+  const filteredMessages = await interceptDevAccessReplies(
+    chatJid,
+    group,
+    isMainGroup,
+    missedMessages,
+  );
+  if (filteredMessages.length === 0) return true; // nothing left to send to Andy
+  missedMessages.splice(0, missedMessages.length, ...filteredMessages);
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
   const imageAttachments = parseImageReferences(missedMessages);
@@ -621,8 +639,24 @@ async function startMessageLoop(): Promise<void> {
             lastAgentTimestamp[chatJid] || '',
             ASSISTANT_NAME,
           );
-          const messagesToSend =
+          const candidateMessages =
             allPending.length > 0 ? allPending : groupMessages;
+
+          // Intercept dev-access replies BEFORE piping to an active container.
+          // Without this, a "yes" from Greg while Andy's container is running
+          // would be forwarded to Andy as a literal message instead of resolving
+          // the pending dev-access grant.
+          const messagesToSend = await interceptDevAccessReplies(
+            chatJid,
+            group,
+            isMainGroup,
+            candidateMessages,
+          );
+          if (messagesToSend.length === 0) {
+            // All messages consumed by dev-access handler; nothing to forward.
+            continue;
+          }
+
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -682,11 +716,20 @@ async function main(): Promise<void> {
   loadState();
 
   // Write PID file so nanoclaw-mount-reload can find us
-  const pidFile = path.join(os.homedir(), '.config', 'nanoclaw', 'nanoclaw.pid');
+  const pidFile = path.join(
+    os.homedir(),
+    '.config',
+    'nanoclaw',
+    'nanoclaw.pid',
+  );
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });
   fs.writeFileSync(pidFile, String(process.pid));
   process.on('exit', () => {
-    try { fs.unlinkSync(pidFile); } catch { /* may not exist */ }
+    try {
+      fs.unlinkSync(pidFile);
+    } catch {
+      /* may not exist */
+    }
   });
 
   // Start credential proxy (containers route API calls through this)
@@ -706,7 +749,9 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGUSR1', () => {
-    logger.info('SIGUSR1 received — reloading mount allowlist and dangerous-commands cache');
+    logger.info(
+      'SIGUSR1 received — reloading mount allowlist and dangerous-commands cache',
+    );
     invalidateAllowlistCache();
     invalidateDangerousCommandsCache();
   });

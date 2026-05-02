@@ -61,7 +61,16 @@ describe('dev-access-handler: end-to-end request flow', () => {
         isMain: true,
         containerConfig: { devAccessEnabled: true },
       }),
-      getRegisteredGroups: () => ({}),
+      getRegisteredGroups: () => ({
+        'main-jid': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andy',
+          added_at: '',
+          isMain: true,
+          containerConfig: { devAccessEnabled: true },
+        },
+      }),
       updateGroupConfig: () => {},
       nanoclawDir: '/tmp/nonexistent-nanoclaw',
     });
@@ -106,7 +115,16 @@ describe('dev-access-handler: end-to-end request flow', () => {
         isMain: true,
         containerConfig: { devAccessEnabled: true },
       }),
-      getRegisteredGroups: () => ({}),
+      getRegisteredGroups: () => ({
+        'main-jid': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andy',
+          added_at: '',
+          isMain: true,
+          containerConfig: { devAccessEnabled: true },
+        },
+      }),
       updateGroupConfig: () => {},
       nanoclawDir: path.join(tmpRoot, 'fake-nanoclaw'),
     });
@@ -347,7 +365,16 @@ describe('dev-access-handler: dangerous-command flow', () => {
         isMain: true,
         containerConfig: { devAccessEnabled: true },
       }),
-      getRegisteredGroups: () => ({}),
+      getRegisteredGroups: () => ({
+        'main-jid': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andy',
+          added_at: '',
+          isMain: true,
+          containerConfig: { devAccessEnabled: true },
+        },
+      }),
       updateGroupConfig: () => {},
       nanoclawDir: '/tmp/nope',
     });
@@ -380,7 +407,9 @@ describe('dev-access-handler: dangerous-command flow', () => {
     const { startDevAccessHandler } = await import('./dev-access-handler.js');
 
     const handler = startDevAccessHandler({
-      sendMessage: async (jid, text) => { sentMessages.push({ jid, text }); },
+      sendMessage: async (jid, text) => {
+        sentMessages.push({ jid, text });
+      },
       getMainGroup: () => ({
         jid: 'main-jid',
         folder: 'main',
@@ -390,7 +419,16 @@ describe('dev-access-handler: dangerous-command flow', () => {
         isMain: true,
         containerConfig: { devAccessEnabled: true },
       }),
-      getRegisteredGroups: () => ({}),
+      getRegisteredGroups: () => ({
+        'main-jid': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andy',
+          added_at: '',
+          isMain: true,
+          containerConfig: { devAccessEnabled: true },
+        },
+      }),
       updateGroupConfig: () => {},
       nanoclawDir: '/tmp/nope',
     });
