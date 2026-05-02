@@ -73,3 +73,48 @@ describe('mount-security: overrideNonMainReadOnly', () => {
     expect(mounts[0].readonly).toBe(true);
   });
 });
+
+describe('mount-security: cache invalidation', () => {
+  beforeEach(() => {
+    fs.mkdirSync(testDir, { recursive: true });
+    fs.mkdirSync(configDir, { recursive: true });
+    vi.resetModules();
+    vi.doMock('./config.js', () => ({
+      MOUNT_ALLOWLIST_PATH: allowlistPath,
+    }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(testDir, { recursive: true, force: true });
+    fs.rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it('reloads allowlist after invalidateAllowlistCache()', async () => {
+    const initial = {
+      allowedRoots: [{ path: testDir, allowReadWrite: false }],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(initial));
+
+    const mod = await import('./mount-security.js');
+    const first = mod.loadMountAllowlist();
+    expect(first?.allowedRoots[0].allowReadWrite).toBe(false);
+
+    const updated = {
+      allowedRoots: [{ path: testDir, allowReadWrite: true }],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(updated));
+
+    // Without invalidation, cache should still return the old value
+    const cached = mod.loadMountAllowlist();
+    expect(cached?.allowedRoots[0].allowReadWrite).toBe(false);
+
+    mod.invalidateAllowlistCache();
+
+    const reloaded = mod.loadMountAllowlist();
+    expect(reloaded?.allowedRoots[0].allowReadWrite).toBe(true);
+  });
+});

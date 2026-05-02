@@ -24,6 +24,16 @@ let cachedAllowlist: MountAllowlist | null = null;
 let allowlistLoadError: string | null = null;
 
 /**
+ * Invalidate the cached allowlist so the next call to loadMountAllowlist()
+ * re-reads from disk. Used by dev-access-handler after grants/revokes,
+ * and by the nanoclaw-mount-reload CLI for manual hot-reload.
+ */
+export function invalidateAllowlistCache(): void {
+  cachedAllowlist = null;
+  allowlistLoadError = null;
+}
+
+/**
  * Default blocked patterns - paths that should never be mounted
  */
 const DEFAULT_BLOCKED_PATTERNS = [
