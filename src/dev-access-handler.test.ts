@@ -165,7 +165,9 @@ describe('dev-access-handler: clone flow', () => {
     const updateGroupConfigCalls: Array<{ jid: string; group: object }> = [];
 
     const handler = startDevAccessHandler({
-      sendMessage: async (jid, text) => { sentMessages.push({ jid, text }); },
+      sendMessage: async (jid, text) => {
+        sentMessages.push({ jid, text });
+      },
       getMainGroup: () => ({
         jid: 'main-jid',
         folder: 'main',
@@ -218,8 +220,11 @@ describe('dev-access-handler: clone flow', () => {
     // Mount was registered
     expect(updateGroupConfigCalls).toHaveLength(1);
     const additionalMounts =
-      (updateGroupConfigCalls[0].group as { containerConfig?: { additionalMounts?: unknown[] } })
-        .containerConfig?.additionalMounts ?? [];
+      (
+        updateGroupConfigCalls[0].group as {
+          containerConfig?: { additionalMounts?: unknown[] };
+        }
+      ).containerConfig?.additionalMounts ?? [];
     expect(additionalMounts).toContainEqual(
       expect.objectContaining({
         containerPath: 'newrepo',
@@ -243,7 +248,9 @@ describe('dev-access-handler: clone flow', () => {
     const updateGroupConfigCalls: Array<{ jid: string; group: object }> = [];
 
     const handler = startDevAccessHandler({
-      sendMessage: async (jid, text) => { sentMessages.push({ jid, text }); },
+      sendMessage: async (jid, text) => {
+        sentMessages.push({ jid, text });
+      },
       getMainGroup: () => ({
         jid: 'main-jid',
         folder: 'main',
@@ -294,6 +301,118 @@ describe('dev-access-handler: clone flow', () => {
     const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
     expect(response.status).toBe('denied');
     expect(response.message).toMatch(/clone/i);
+
+    handler.stop();
+  });
+});
+
+describe('dev-access-handler: dangerous-command flow', () => {
+  beforeEach(() => {
+    fs.mkdirSync(path.join(ipcDir, 'access-requests'), { recursive: true });
+    fs.mkdirSync(path.join(ipcDir, 'access-responses'), { recursive: true });
+    fs.mkdirSync(path.join(ipcDir, 'dangerous-commands'), { recursive: true });
+    fs.mkdirSync(path.join(ipcDir, 'dangerous-responses'), { recursive: true });
+    fs.mkdirSync(path.join(groupsDir, 'main'), { recursive: true });
+    fs.mkdirSync(path.dirname(allowlistPath), { recursive: true });
+    fs.writeFileSync(
+      allowlistPath,
+      JSON.stringify({
+        allowedRoots: [
+          { path: tmpRoot, allowReadWrite: false, requireApproval: true },
+        ],
+        blockedPatterns: [],
+        nonMainReadOnly: true,
+      }),
+    );
+    sentMessages.length = 0;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('prompts and on yes writes approved response', async () => {
+    const { startDevAccessHandler } = await import('./dev-access-handler.js');
+
+    const handler = startDevAccessHandler({
+      sendMessage: async (jid, text) => {
+        sentMessages.push({ jid, text });
+      },
+      getMainGroup: () => ({
+        jid: 'main-jid',
+        folder: 'main',
+        name: 'Main',
+        trigger: '@andy',
+        added_at: '',
+        isMain: true,
+        containerConfig: { devAccessEnabled: true },
+      }),
+      getRegisteredGroups: () => ({}),
+      updateGroupConfig: () => {},
+      nanoclawDir: '/tmp/nope',
+    });
+
+    fs.writeFileSync(
+      path.join(ipcDir, 'dangerous-commands', 'd1.json'),
+      JSON.stringify({
+        id: 'd1',
+        command: 'rm -rf .next/',
+        cwd: '/workspace/dev/TestProj',
+        requestedAt: new Date().toISOString(),
+      }),
+    );
+
+    await new Promise((r) => setTimeout(r, 200));
+    expect(sentMessages.some((m) => m.text.includes('rm -rf'))).toBe(true);
+
+    await handler.tryConsumeReply('main', 'yes');
+    await new Promise((r) => setTimeout(r, 100));
+
+    const resFile = path.join(ipcDir, 'dangerous-responses', 'd1.json');
+    expect(fs.existsSync(resFile)).toBe(true);
+    const res = JSON.parse(fs.readFileSync(resFile, 'utf-8'));
+    expect(res.status).toBe('approved');
+
+    handler.stop();
+  });
+
+  it('writes denied response when user replies no', async () => {
+    const { startDevAccessHandler } = await import('./dev-access-handler.js');
+
+    const handler = startDevAccessHandler({
+      sendMessage: async (jid, text) => { sentMessages.push({ jid, text }); },
+      getMainGroup: () => ({
+        jid: 'main-jid',
+        folder: 'main',
+        name: 'Main',
+        trigger: '@andy',
+        added_at: '',
+        isMain: true,
+        containerConfig: { devAccessEnabled: true },
+      }),
+      getRegisteredGroups: () => ({}),
+      updateGroupConfig: () => {},
+      nanoclawDir: '/tmp/nope',
+    });
+
+    fs.writeFileSync(
+      path.join(ipcDir, 'dangerous-commands', 'd2.json'),
+      JSON.stringify({
+        id: 'd2',
+        command: 'git push --force origin main',
+        cwd: '/workspace/dev/SomeProj',
+        requestedAt: new Date().toISOString(),
+      }),
+    );
+
+    await new Promise((r) => setTimeout(r, 200));
+    await handler.tryConsumeReply('main', 'no');
+    await new Promise((r) => setTimeout(r, 100));
+
+    const resFile = path.join(ipcDir, 'dangerous-responses', 'd2.json');
+    expect(fs.existsSync(resFile)).toBe(true);
+    const res = JSON.parse(fs.readFileSync(resFile, 'utf-8'));
+    expect(res.status).toBe('denied');
 
     handler.stop();
   });

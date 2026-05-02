@@ -46,7 +46,11 @@ export interface DevAccessDeps {
    * Clone a GitHub repo to destPath. Defaults to `gh repo clone <owner>/<project> <destPath>`.
    * Inject a stub in tests to avoid touching the filesystem or network.
    */
-  cloneRepo?: (owner: string, project: string, destPath: string) => Promise<void>;
+  cloneRepo?: (
+    owner: string,
+    project: string,
+    destPath: string,
+  ) => Promise<void>;
 }
 
 interface DevAccessIncomingRequest {
@@ -108,6 +112,16 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
 
   function writeResponse(groupFolder: string, id: string, body: object): void {
     const dir = getResponsesDir(groupFolder);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify(body));
+  }
+
+  function writeDangerousResponse(
+    groupFolder: string,
+    id: string,
+    body: object,
+  ): void {
+    const dir = path.join(DATA_DIR, 'ipc', groupFolder, 'dangerous-responses');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify(body));
   }
@@ -251,6 +265,65 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
   }
 
   // ---------------------------------------------------------------------------
+  // Dangerous-command request processing
+  // ---------------------------------------------------------------------------
+
+  async function processDangerousRequestFile(
+    groupFolder: string,
+    filePath: string,
+  ): Promise<void> {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    fs.unlinkSync(filePath);
+    let req: { id: string; command: string; cwd?: string; requestedAt: string };
+    try {
+      req = JSON.parse(raw);
+    } catch (err) {
+      logger.warn({ err, filePath }, 'Failed to parse dangerous-command request');
+      return;
+    }
+
+    // Project hint: derive from cwd (e.g., /workspace/dev/VoltWise/...)
+    const projectMatch = (req.cwd ?? '').match(/^\/workspace\/dev\/([^/]+)/);
+    const project = projectMatch?.[1];
+
+    queue.add({
+      id: req.id,
+      groupFolder,
+      command: 'request', // distinguished by fullCommand presence
+      project,
+      fullCommand: req.command,
+      cwd: req.cwd,
+      requestedAt: req.requestedAt,
+    });
+
+    const main = deps.getMainGroup();
+    if (!main) {
+      writeDangerousResponse(groupFolder, req.id, {
+        id: req.id,
+        status: 'timeout',
+        message: 'No main group registered',
+      });
+      queue.resolveById(groupFolder, req.id);
+      return;
+    }
+
+    const prompt = `Andy wants to run \`${req.command}\`${
+      project ? ` in ${project}` : ''
+    }. Reply yes/no.`;
+    try {
+      await deps.sendMessage(main.jid ?? '', prompt);
+    } catch (err) {
+      logger.warn({ err, id: req.id }, 'Failed to send dangerous-command prompt');
+      writeDangerousResponse(groupFolder, req.id, {
+        id: req.id,
+        status: 'timeout',
+        message: 'Could not deliver prompt',
+      });
+      queue.resolveById(groupFolder, req.id);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Prompt formatting
   // ---------------------------------------------------------------------------
 
@@ -300,6 +373,24 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
     const cutoff = Date.now() - REQUEST_TIMEOUT_MS;
     const expired = queue.expireOlderThan(cutoff);
     for (const r of expired) {
+      if (r.fullCommand) {
+        writeDangerousResponse(r.groupFolder, r.id, {
+          id: r.id,
+          status: 'denied',
+          message: 'Timed out waiting for user reply',
+        });
+        appendAuditEntry(
+          path.join(GROUPS_DIR, r.groupFolder, 'dangerous-commands.log'),
+          {
+            timestamp: new Date().toISOString(),
+            action: 'dangerous-denied',
+            project: r.project,
+            source: 'timeout',
+            details: { command: r.fullCommand, cwd: r.cwd },
+          },
+        );
+        continue;
+      }
       writeResponse(r.groupFolder, r.id, {
         id: r.id,
         status: 'timeout',
@@ -329,10 +420,18 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
 
         for (const groupFolder of groupFolders) {
           const dir = getRequestsDir(groupFolder);
-          if (!fs.existsSync(dir)) continue;
-          const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
-          for (const file of files) {
-            await processRequestFile(groupFolder, path.join(dir, file));
+          if (fs.existsSync(dir)) {
+            const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+            for (const file of files) {
+              await processRequestFile(groupFolder, path.join(dir, file));
+            }
+          }
+
+          const dangerousDir = path.join(DATA_DIR, 'ipc', groupFolder, 'dangerous-commands');
+          if (fs.existsSync(dangerousDir)) {
+            for (const file of fs.readdirSync(dangerousDir).filter((f) => f.endsWith('.json'))) {
+              await processDangerousRequestFile(groupFolder, path.join(dangerousDir, file));
+            }
           }
         }
       }
@@ -377,6 +476,25 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
   // ---------------------------------------------------------------------------
 
   async function applyGrant(req: PendingRequest): Promise<void> {
+    if (req.fullCommand) {
+      writeDangerousResponse(req.groupFolder, req.id, {
+        id: req.id,
+        status: 'approved',
+        message: 'User approved',
+      });
+      appendAuditEntry(
+        path.join(GROUPS_DIR, req.groupFolder, 'dangerous-commands.log'),
+        {
+          timestamp: new Date().toISOString(),
+          action: 'dangerous-approved',
+          project: req.project,
+          source: 'signal-reply',
+          details: { command: req.fullCommand, cwd: req.cwd },
+        },
+      );
+      return;
+    }
+
     const approvalRoot = resolveApprovalRoot() ?? '/';
     const projectPath = path.join(approvalRoot, req.project!);
 
@@ -391,8 +509,7 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
             'dev-access: gh repo clone succeeded',
           );
         } catch (err: unknown) {
-          const cloneError =
-            err instanceof Error ? err.message : String(err);
+          const cloneError = err instanceof Error ? err.message : String(err);
           logger.warn(
             { owner, project: req.project, cloneError },
             'dev-access: gh repo clone failed',
@@ -483,6 +600,25 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
   // ---------------------------------------------------------------------------
 
   async function applyDenial(req: PendingRequest): Promise<void> {
+    if (req.fullCommand) {
+      writeDangerousResponse(req.groupFolder, req.id, {
+        id: req.id,
+        status: 'denied',
+        message: 'User denied',
+      });
+      appendAuditEntry(
+        path.join(GROUPS_DIR, req.groupFolder, 'dangerous-commands.log'),
+        {
+          timestamp: new Date().toISOString(),
+          action: 'dangerous-denied',
+          project: req.project,
+          source: 'signal-reply',
+          details: { command: req.fullCommand, cwd: req.cwd },
+        },
+      );
+      return;
+    }
+
     writeResponse(req.groupFolder, req.id, {
       id: req.id,
       status: 'denied',
