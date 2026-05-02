@@ -27,12 +27,13 @@ function writeAllowlistAtomic(allowlist: MountAllowlist): void {
 }
 
 export function addSubdirEntry(opts: AddSubdirOptions): void {
+  const normalizedPath = path.normalize(opts.path).replace(/\/$/, '');
   const allowlist = readAllowlist();
-  const exists = allowlist.allowedRoots.some((r) => r.path === opts.path);
+  const exists = allowlist.allowedRoots.some((r) => r.path === normalizedPath);
   if (exists) return;
 
   const entry: AllowedRoot = {
-    path: opts.path,
+    path: normalizedPath,
     allowReadWrite: true,
     overrideNonMainReadOnly: true,
     description: opts.description,
@@ -42,10 +43,11 @@ export function addSubdirEntry(opts: AddSubdirOptions): void {
 }
 
 export function removeSubdirEntry(targetPath: string): void {
+  const normalizedPath = path.normalize(targetPath).replace(/\/$/, '');
   const allowlist = readAllowlist();
   const before = allowlist.allowedRoots.length;
   allowlist.allowedRoots = allowlist.allowedRoots.filter(
-    (r) => r.path !== targetPath,
+    (r) => r.path !== normalizedPath,
   );
   if (allowlist.allowedRoots.length === before) return;
   writeAllowlistAtomic(allowlist);

@@ -26,7 +26,11 @@ describe('allowlist-writer', () => {
   it('adds a subdirectory entry preserving existing roots', async () => {
     const initial = {
       allowedRoots: [
-        { path: '/Volumes/1tbSSD', allowReadWrite: false, requireApproval: true },
+        {
+          path: '/Volumes/1tbSSD',
+          allowReadWrite: false,
+          requireApproval: true,
+        },
       ],
       blockedPatterns: [],
       nonMainReadOnly: true,
@@ -52,7 +56,11 @@ describe('allowlist-writer', () => {
   it('is idempotent — adding an existing entry does not duplicate', async () => {
     const initial = {
       allowedRoots: [
-        { path: '/Volumes/1tbSSD/VoltWise', allowReadWrite: true, overrideNonMainReadOnly: true },
+        {
+          path: '/Volumes/1tbSSD/VoltWise',
+          allowReadWrite: true,
+          overrideNonMainReadOnly: true,
+        },
       ],
       blockedPatterns: [],
       nonMainReadOnly: true,
@@ -69,8 +77,16 @@ describe('allowlist-writer', () => {
   it('removes a subdirectory entry by path', async () => {
     const initial = {
       allowedRoots: [
-        { path: '/Volumes/1tbSSD', allowReadWrite: false, requireApproval: true },
-        { path: '/Volumes/1tbSSD/VoltWise', allowReadWrite: true, overrideNonMainReadOnly: true },
+        {
+          path: '/Volumes/1tbSSD',
+          allowReadWrite: false,
+          requireApproval: true,
+        },
+        {
+          path: '/Volumes/1tbSSD/VoltWise',
+          allowReadWrite: true,
+          overrideNonMainReadOnly: true,
+        },
       ],
       blockedPatterns: [],
       nonMainReadOnly: true,
@@ -87,7 +103,13 @@ describe('allowlist-writer', () => {
 
   it('atomic write: leaves no partial file on failure', async () => {
     const initial = {
-      allowedRoots: [{ path: '/Volumes/1tbSSD', allowReadWrite: false, requireApproval: true }],
+      allowedRoots: [
+        {
+          path: '/Volumes/1tbSSD',
+          allowReadWrite: false,
+          requireApproval: true,
+        },
+      ],
       blockedPatterns: [],
       nonMainReadOnly: true,
     };
@@ -99,5 +121,41 @@ describe('allowlist-writer', () => {
     // No .tmp file should remain
     const tmpFile = allowlistPath + '.tmp';
     expect(fs.existsSync(tmpFile)).toBe(false);
+  });
+
+  it('normalises path on add — trailing slash deduplicates with non-trailing-slash entry', async () => {
+    const initial = {
+      allowedRoots: [
+        { path: '/Volumes/1tbSSD/VoltWise', allowReadWrite: true, overrideNonMainReadOnly: true },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(initial));
+
+    const mod = await import('./allowlist-writer.js');
+    mod.addSubdirEntry({ path: '/Volumes/1tbSSD/VoltWise/' });
+
+    const updated = JSON.parse(fs.readFileSync(allowlistPath, 'utf-8'));
+    expect(updated.allowedRoots).toHaveLength(1);
+  });
+
+  it('lists only writable subdirectories under a root', async () => {
+    const initial = {
+      allowedRoots: [
+        { path: '/Volumes/1tbSSD', allowReadWrite: false, requireApproval: true },
+        { path: '/Volumes/1tbSSD/VoltWise', allowReadWrite: true },
+        { path: '/Volumes/1tbSSD/Eirene', allowReadWrite: false },
+        { path: '/Volumes/other', allowReadWrite: true },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(initial));
+
+    const mod = await import('./allowlist-writer.js');
+    const result = mod.listWritableSubdirs('/Volumes/1tbSSD');
+
+    expect(result).toEqual(['/Volumes/1tbSSD/VoltWise']);
   });
 });
