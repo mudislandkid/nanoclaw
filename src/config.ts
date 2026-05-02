@@ -27,6 +27,12 @@ export const MOUNT_ALLOWLIST_PATH = path.join(
   'nanoclaw',
   'mount-allowlist.json',
 );
+export const DANGEROUS_COMMANDS_PATH = path.join(
+  HOME_DIR,
+  '.config',
+  'nanoclaw',
+  'dangerous-commands.json',
+);
 export const SENDER_ALLOWLIST_PATH = path.join(
   HOME_DIR,
   '.config',
