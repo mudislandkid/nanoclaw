@@ -118,3 +118,69 @@ describe('mount-security: cache invalidation', () => {
     expect(reloaded?.allowedRoots[0].allowReadWrite).toBe(true);
   });
 });
+
+describe('mount-security: requireApproval roots', () => {
+  beforeEach(() => {
+    fs.mkdirSync(testDir, { recursive: true });
+    fs.mkdirSync(configDir, { recursive: true });
+    vi.resetModules();
+    vi.doMock('./config.js', () => ({
+      MOUNT_ALLOWLIST_PATH: allowlistPath,
+    }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(testDir, { recursive: true, force: true });
+    fs.rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it('forces root with requireApproval:true to read-only', async () => {
+    const allowlist = {
+      allowedRoots: [
+        {
+          path: testDir,
+          allowReadWrite: true,
+          requireApproval: true,
+        },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: false,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(allowlist));
+
+    const mod = await import('./mount-security.js');
+    // Even though allowReadWrite:true, the root itself is RO when
+    // requireApproval is set — only explicit child entries can be RW.
+    const result = mod.validateMount(
+      { hostPath: testDir, containerPath: 'dev', readonly: false },
+      true,
+    );
+
+    expect(result.allowed).toBe(true);
+    expect(result.effectiveReadonly).toBe(true);
+  });
+
+  it('allows RW for subdirectory with its own allowlist entry under a requireApproval root', async () => {
+    const subDir = path.join(testDir, 'VoltWise');
+    fs.mkdirSync(subDir, { recursive: true });
+
+    const allowlist = {
+      allowedRoots: [
+        { path: testDir, allowReadWrite: false, requireApproval: true },
+        { path: subDir, allowReadWrite: true, overrideNonMainReadOnly: true },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(allowlist));
+
+    const mod = await import('./mount-security.js');
+    const result = mod.validateMount(
+      { hostPath: subDir, containerPath: 'VoltWise', readonly: false },
+      true,
+    );
+
+    expect(result.allowed).toBe(true);
+    expect(result.effectiveReadonly).toBe(false);
+  });
+});

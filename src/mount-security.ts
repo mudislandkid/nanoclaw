@@ -181,12 +181,17 @@ function matchesBlockedPattern(
 }
 
 /**
- * Check if a real path is under an allowed root
+ * Check if a real path is under an allowed root.
+ * Returns the most-specific (longest) matching root so that explicit
+ * subdirectory entries always take precedence over parent roots.
  */
 function findAllowedRoot(
   realPath: string,
   allowedRoots: AllowedRoot[],
 ): AllowedRoot | null {
+  let bestMatch: AllowedRoot | null = null;
+  let bestMatchLength = -1;
+
   for (const root of allowedRoots) {
     const expandedRoot = expandPath(root.path);
     const realRoot = getRealPath(expandedRoot);
@@ -199,11 +204,15 @@ function findAllowedRoot(
     // Check if realPath is under realRoot
     const relative = path.relative(realRoot, realPath);
     if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
-      return root;
+      // Prefer the most-specific (longest) matching root
+      if (realRoot.length > bestMatchLength) {
+        bestMatch = root;
+        bestMatchLength = realRoot.length;
+      }
     }
   }
 
-  return null;
+  return bestMatch;
 }
 
 /**
@@ -304,31 +313,34 @@ export function validateMount(
   let effectiveReadonly = true; // Default to readonly
 
   if (requestedReadWrite) {
-    if (
+    // requireApproval: when the request is for the root itself (not a
+    // subdirectory entry), force RO. RW only via explicit subdir entries.
+    const expandedRoot = expandPath(allowedRoot.path);
+    const realRoot = getRealPath(expandedRoot);
+    const isRootItself = realRoot !== null && realRoot === realPath;
+    if (allowedRoot.requireApproval && isRootItself) {
+      effectiveReadonly = true;
+      logger.info(
+        { mount: mount.hostPath, root: allowedRoot.path },
+        'Mount forced to read-only — requireApproval root',
+      );
+    } else if (
       !isMain &&
       allowlist.nonMainReadOnly &&
       !allowedRoot.overrideNonMainReadOnly
     ) {
-      // Non-main groups forced to read-only
       effectiveReadonly = true;
       logger.info(
-        {
-          mount: mount.hostPath,
-        },
+        { mount: mount.hostPath },
         'Mount forced to read-only for non-main group',
       );
     } else if (!allowedRoot.allowReadWrite) {
-      // Root doesn't allow read-write
       effectiveReadonly = true;
       logger.info(
-        {
-          mount: mount.hostPath,
-          root: allowedRoot.path,
-        },
+        { mount: mount.hostPath, root: allowedRoot.path },
         'Mount forced to read-only - root does not allow read-write',
       );
     } else {
-      // Read-write allowed
       effectiveReadonly = false;
     }
   }
