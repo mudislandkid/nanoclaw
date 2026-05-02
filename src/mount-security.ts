@@ -313,12 +313,7 @@ export function validateMount(
   let effectiveReadonly = true; // Default to readonly
 
   if (requestedReadWrite) {
-    // requireApproval: when the request is for the root itself (not a
-    // subdirectory entry), force RO. RW only via explicit subdir entries.
-    const expandedRoot = expandPath(allowedRoot.path);
-    const realRoot = getRealPath(expandedRoot);
-    const isRootItself = realRoot !== null && realRoot === realPath;
-    if (allowedRoot.requireApproval && isRootItself) {
+    if (allowedRoot.requireApproval) {
       effectiveReadonly = true;
       logger.info(
         { mount: mount.hostPath, root: allowedRoot.path },

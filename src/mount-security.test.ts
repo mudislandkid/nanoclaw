@@ -183,4 +183,31 @@ describe('mount-security: requireApproval roots', () => {
     expect(result.allowed).toBe(true);
     expect(result.effectiveReadonly).toBe(false);
   });
+
+  it('forces RO for subdirectory under requireApproval root with no explicit child entry', async () => {
+    const subDir = path.join(testDir, 'unlistedDir');
+    fs.mkdirSync(subDir, { recursive: true });
+
+    // Parent root has allowReadWrite:true (so the SSD root is technically allowed)
+    // and requireApproval:true. The subdir does NOT have its own entry.
+    // Result: subdir should be forced RO because it falls under a
+    // requireApproval root.
+    const allowlist = {
+      allowedRoots: [
+        { path: testDir, allowReadWrite: true, requireApproval: true },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: false,
+    };
+    fs.writeFileSync(allowlistPath, JSON.stringify(allowlist));
+
+    const mod = await import('./mount-security.js');
+    const result = mod.validateMount(
+      { hostPath: subDir, containerPath: 'unlistedDir', readonly: false },
+      true,
+    );
+
+    expect(result.allowed).toBe(true);
+    expect(result.effectiveReadonly).toBe(true);
+  });
 });
