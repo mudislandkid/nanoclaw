@@ -57,6 +57,10 @@ import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { parseImageReferences } from './image.js';
 import { logger } from './logger.js';
+import {
+  startDevAccessHandler,
+  DevAccessHandler,
+} from './dev-access-handler.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -66,6 +70,7 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+let devAccessHandler: DevAccessHandler | null = null;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -310,6 +315,37 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) return true;
+  }
+
+  // Intercept dev-access yes/no replies for the main group with pending requests.
+  if (
+    devAccessHandler &&
+    isMainGroup &&
+    devAccessHandler.hasPending(group.folder)
+  ) {
+    const remaining: NewMessage[] = [];
+    for (const m of missedMessages) {
+      if (m.is_from_me || m.is_bot_message) {
+        remaining.push(m);
+        continue;
+      }
+      // tryConsumeReply returns true when the message resolves a pending request
+      // and should not be forwarded to Andy.
+      const consumed = await devAccessHandler.tryConsumeReply(
+        group.folder,
+        m.content,
+      );
+      if (consumed) {
+        // Advance cursor past the consumed reply so we don't re-fetch it.
+        lastAgentTimestamp[chatJid] = m.timestamp;
+        saveState();
+      } else {
+        remaining.push(m);
+      }
+    }
+    if (remaining.length === 0) return true; // nothing left to send to Andy
+    // Replace the array contents in place
+    missedMessages.splice(0, missedMessages.length, ...remaining);
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
@@ -727,6 +763,32 @@ async function main(): Promise<void> {
     logger.fatal('No channels connected');
     process.exit(1);
   }
+
+  // Start dev-access handler (binds to channels, registeredGroups, and DB)
+  devAccessHandler = startDevAccessHandler({
+    sendMessage: async (jid, text) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) {
+        logger.warn({ jid }, 'No channel for dev-access prompt');
+        return;
+      }
+      await channel.sendMessage(jid, text);
+    },
+    getMainGroup: () => {
+      const entry = Object.entries(registeredGroups).find(
+        ([, g]) => g.isMain,
+      );
+      if (!entry) return null;
+      const [jid, g] = entry;
+      return { ...g, jid };
+    },
+    getRegisteredGroups: () => registeredGroups,
+    updateGroupConfig: (jid, updated) => {
+      registeredGroups[jid] = updated;
+      setRegisteredGroup(jid, updated);
+    },
+    nanoclawDir: process.cwd(),
+  });
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
