@@ -4,7 +4,6 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
 import { readEnvFile } from './env.js';
@@ -29,7 +28,11 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
-import { loadMountAllowlist, validateAdditionalMounts } from './mount-security.js';
+import {
+  expandPath,
+  loadMountAllowlist,
+  validateAdditionalMounts,
+} from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -206,20 +209,28 @@ export function buildVolumeMounts(
 
   // Auto-mount requireApproval roots for groups with devAccessEnabled.
   // The root itself is RO; per-project RW overlays come from additionalMounts.
+  // Spec assumes a single requireApproval root (/Volumes/1tbSSD/) — if the
+  // allowlist has multiple, only the first is mounted to avoid duplicate
+  // bind targets at the same containerPath.
   if (group.containerConfig?.devAccessEnabled) {
     const allowlist = loadMountAllowlist();
     if (allowlist) {
       for (const root of allowlist.allowedRoots) {
         if (!root.requireApproval) continue;
-        const expanded = root.path.startsWith('~')
-          ? path.join(process.env.HOME || os.homedir(), root.path.slice(2))
-          : root.path;
+        const expanded = expandPath(root.path);
         if (!fs.existsSync(expanded)) continue;
+        let real: string;
+        try {
+          real = fs.realpathSync(expanded);
+        } catch {
+          continue;
+        }
         mounts.push({
-          hostPath: expanded,
+          hostPath: real,
           containerPath: '/workspace/dev',
           readonly: true,
         });
+        break; // single /workspace/dev mount; first match wins
       }
     }
   }

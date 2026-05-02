@@ -89,7 +89,11 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, buildVolumeMounts, ContainerOutput } from './container-runner.js';
+import {
+  runContainerAgent,
+  buildVolumeMounts,
+  ContainerOutput,
+} from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -260,13 +264,16 @@ describe('container-runner: devAccessEnabled auto RO root mount', () => {
     vi.doMock('./credential-proxy.js', () => ({
       detectAuthMode: vi.fn(() => 'api-key'),
     }));
-    // Mount-security: loadMountAllowlist returns the stub set by each test
+    // Mount-security: loadMountAllowlist returns the stub set by each test;
+    // expandPath is the real implementation (identity for absolute paths)
     vi.doMock('./mount-security.js', () => ({
       loadMountAllowlist: () => allowlistStub,
       validateAdditionalMounts: () => [],
       invalidateAllowlistCache: () => {},
+      expandPath: (p: string) => p, // absolute test paths pass through unchanged
     }));
     // Override fs so that existsSync returns true for the test dev dir.
+    // realpathSync returns the path unchanged for known test dirs (no symlinks).
     // The factory must be synchronous for vi.doMock; we use the `fs` import
     // (bound to the top-level mock) and restore all real methods except existsSync.
     vi.doMock('fs', () => ({
@@ -275,6 +282,7 @@ describe('container-runner: devAccessEnabled auto RO root mount', () => {
         ...fs,
         // Allow the test dev dir to exist; everything else stays false.
         existsSync: (p: string) => p === devTestDir || p.startsWith(devTestDir),
+        realpathSync: (p: string) => p, // no symlinks in test paths
         mkdirSync: vi.fn(),
         writeFileSync: vi.fn(),
         readFileSync: vi.fn(() => ''),
@@ -351,5 +359,75 @@ describe('container-runner: devAccessEnabled auto RO root mount', () => {
 
     const devMount = mounts.find((m) => m.containerPath === '/workspace/dev');
     expect(devMount).toBeUndefined();
+  });
+
+  it('mounts only the first requireApproval root when multiple exist', async () => {
+    // Setup: allowlist with two requireApproval roots.
+    // Both paths are under devTestDir so existsSync returns true for both.
+    const devTestDir2 = devTestDir + '-second';
+    allowlistStub = {
+      allowedRoots: [
+        {
+          path: devTestDir,
+          allowReadWrite: true,
+          requireApproval: true,
+          description: 'First dev root',
+        },
+        {
+          path: devTestDir2,
+          allowReadWrite: true,
+          requireApproval: true,
+          description: 'Second dev root',
+        },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+
+    const group = {
+      name: 'Dev Group',
+      folder: 'dev-group',
+      trigger: '@Dev',
+      added_at: new Date().toISOString(),
+      containerConfig: { devAccessEnabled: true },
+    };
+
+    const mod = await import('./container-runner.js');
+    const mounts = mod.buildVolumeMounts(group, true);
+
+    // Only the first requireApproval root should produce a /workspace/dev mount
+    const devMounts = mounts.filter((m) => m.containerPath === '/workspace/dev');
+    expect(devMounts).toHaveLength(1);
+    expect(devMounts[0].hostPath).toBe(devTestDir);
+  });
+
+  it('skips roots with requireApproval:false even when devAccessEnabled', async () => {
+    // Setup: allowlist with a single root that has requireApproval:false.
+    allowlistStub = {
+      allowedRoots: [
+        {
+          path: devTestDir,
+          allowReadWrite: true,
+          requireApproval: false,
+          description: 'Non-approval root',
+        },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+
+    const group = {
+      name: 'Dev Group',
+      folder: 'dev-group',
+      trigger: '@Dev',
+      added_at: new Date().toISOString(),
+      containerConfig: { devAccessEnabled: true },
+    };
+
+    const mod = await import('./container-runner.js');
+    const mounts = mod.buildVolumeMounts(group, true);
+
+    const devMounts = mounts.filter((m) => m.containerPath === '/workspace/dev');
+    expect(devMounts).toHaveLength(0);
   });
 });
