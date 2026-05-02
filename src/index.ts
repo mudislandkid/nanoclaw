@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -61,6 +62,8 @@ import {
   startDevAccessHandler,
   DevAccessHandler,
 } from './dev-access-handler.js';
+import { invalidateAllowlistCache } from './mount-security.js';
+import { invalidateDangerousCommandsCache } from './dangerous-commands.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -678,6 +681,14 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Write PID file so nanoclaw-mount-reload can find us
+  const pidFile = path.join(os.homedir(), '.config', 'nanoclaw', 'nanoclaw.pid');
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, String(process.pid));
+  process.on('exit', () => {
+    try { fs.unlinkSync(pidFile); } catch { /* may not exist */ }
+  });
+
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
@@ -694,6 +705,11 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGUSR1', () => {
+    logger.info('SIGUSR1 received — reloading mount allowlist and dangerous-commands cache');
+    invalidateAllowlistCache();
+    invalidateDangerousCommandsCache();
+  });
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
@@ -775,9 +791,7 @@ async function main(): Promise<void> {
       await channel.sendMessage(jid, text);
     },
     getMainGroup: () => {
-      const entry = Object.entries(registeredGroups).find(
-        ([, g]) => g.isMain,
-      );
+      const entry = Object.entries(registeredGroups).find(([, g]) => g.isMain);
       if (!entry) return null;
       const [jid, g] = entry;
       return { ...g, jid };
