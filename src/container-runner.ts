@@ -4,6 +4,7 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { readEnvFile } from './env.js';
@@ -28,7 +29,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
-import { validateAdditionalMounts } from './mount-security.js';
+import { loadMountAllowlist, validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -59,7 +60,8 @@ interface VolumeMount {
   readonly: boolean;
 }
 
-function buildVolumeMounts(
+/** @internal */
+export function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
 ): VolumeMount[] {
@@ -201,6 +203,26 @@ function buildVolumeMounts(
     containerPath: '/app/src',
     readonly: false,
   });
+
+  // Auto-mount requireApproval roots for groups with devAccessEnabled.
+  // The root itself is RO; per-project RW overlays come from additionalMounts.
+  if (group.containerConfig?.devAccessEnabled) {
+    const allowlist = loadMountAllowlist();
+    if (allowlist) {
+      for (const root of allowlist.allowedRoots) {
+        if (!root.requireApproval) continue;
+        const expanded = root.path.startsWith('~')
+          ? path.join(process.env.HOME || os.homedir(), root.path.slice(2))
+          : root.path;
+        if (!fs.existsSync(expanded)) continue;
+        mounts.push({
+          hostPath: expanded,
+          containerPath: '/workspace/dev',
+          readonly: true,
+        });
+      }
+    }
+  }
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {

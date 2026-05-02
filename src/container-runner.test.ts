@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 // Sentinel markers must match container-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -86,7 +89,7 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import { runContainerAgent, buildVolumeMounts, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -206,5 +209,147 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+describe('container-runner: devAccessEnabled auto RO root mount', () => {
+  const devTestDir = path.join(os.tmpdir(), 'nanoclaw-dev-mount-test');
+
+  // Shared allowlist stub — tests set this before importing the module
+  let allowlistStub: import('./types.js').MountAllowlist | null = null;
+
+  beforeEach(() => {
+    fs.mkdirSync(devTestDir, { recursive: true });
+    allowlistStub = null;
+    vi.resetModules();
+
+    // All heavy deps mocked so buildVolumeMounts can run without side effects
+    vi.doMock('./config.js', () => ({
+      CONTAINER_IMAGE: 'nanoclaw-agent:latest',
+      CONTAINER_MAX_OUTPUT_SIZE: 10485760,
+      CONTAINER_TIMEOUT: 1800000,
+      CREDENTIAL_PROXY_PORT: 3001,
+      DATA_DIR: path.join(os.tmpdir(), 'nanoclaw-dev-test-data'),
+      GROUPS_DIR: path.join(os.tmpdir(), 'nanoclaw-dev-test-groups'),
+      IDLE_TIMEOUT: 1800000,
+      TIMEZONE: 'America/Los_Angeles',
+      MOUNT_ALLOWLIST_PATH: '/nonexistent/path',
+    }));
+    vi.doMock('./logger.js', () => ({
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('./group-folder.js', () => ({
+      resolveGroupFolderPath: (folder: string) =>
+        path.join(os.tmpdir(), 'nanoclaw-dev-test-groups', folder),
+      resolveGroupIpcPath: (folder: string) =>
+        path.join(os.tmpdir(), 'nanoclaw-dev-test-ipc', folder),
+    }));
+    vi.doMock('./env.js', () => ({
+      readEnvFile: vi.fn(() => ({})),
+    }));
+    vi.doMock('./container-runtime.js', () => ({
+      CONTAINER_HOST_GATEWAY: '172.17.0.1',
+      CONTAINER_RUNTIME_BIN: 'docker',
+      hostGatewayArgs: vi.fn(() => []),
+      readonlyMountArgs: vi.fn((host: string, container: string) => [
+        '--mount',
+        `type=bind,source=${host},target=${container},readonly`,
+      ]),
+      stopContainer: vi.fn(() => 'docker stop test'),
+    }));
+    vi.doMock('./credential-proxy.js', () => ({
+      detectAuthMode: vi.fn(() => 'api-key'),
+    }));
+    // Mount-security: loadMountAllowlist returns the stub set by each test
+    vi.doMock('./mount-security.js', () => ({
+      loadMountAllowlist: () => allowlistStub,
+      validateAdditionalMounts: () => [],
+      invalidateAllowlistCache: () => {},
+    }));
+    // Override fs so that existsSync returns true for the test dev dir.
+    // The factory must be synchronous for vi.doMock; we use the `fs` import
+    // (bound to the top-level mock) and restore all real methods except existsSync.
+    vi.doMock('fs', () => ({
+      ...fs,
+      default: {
+        ...fs,
+        // Allow the test dev dir to exist; everything else stays false.
+        existsSync: (p: string) => p === devTestDir || p.startsWith(devTestDir),
+        mkdirSync: vi.fn(),
+        writeFileSync: vi.fn(),
+        readFileSync: vi.fn(() => ''),
+        readdirSync: vi.fn(() => []),
+        statSync: vi.fn(() => ({ isDirectory: () => false })),
+        copyFileSync: vi.fn(),
+        cpSync: vi.fn(),
+      },
+    }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(devTestDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('adds RO root mount for each requireApproval allowlist root when devAccessEnabled', async () => {
+    // Arrange: allowlist with the test root marked requireApproval
+    allowlistStub = {
+      allowedRoots: [
+        {
+          path: devTestDir,
+          allowReadWrite: true,
+          requireApproval: true,
+          description: 'Dev projects root',
+        },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+
+    const group = {
+      name: 'Dev Group',
+      folder: 'dev-group',
+      trigger: '@Dev',
+      added_at: new Date().toISOString(),
+      containerConfig: { devAccessEnabled: true },
+    };
+
+    const mod = await import('./container-runner.js');
+    const mounts = mod.buildVolumeMounts(group, true);
+
+    const devMount = mounts.find((m) => m.containerPath === '/workspace/dev');
+    expect(devMount).toBeDefined();
+    expect(devMount!.readonly).toBe(true);
+    expect(devMount!.hostPath).toBe(devTestDir);
+  });
+
+  it('does not add the auto RO mount when devAccessEnabled is false', async () => {
+    // Arrange: same allowlist, but devAccessEnabled = false
+    allowlistStub = {
+      allowedRoots: [
+        {
+          path: devTestDir,
+          allowReadWrite: true,
+          requireApproval: true,
+          description: 'Dev projects root',
+        },
+      ],
+      blockedPatterns: [],
+      nonMainReadOnly: true,
+    };
+
+    const group = {
+      name: 'Dev Group',
+      folder: 'dev-group',
+      trigger: '@Dev',
+      added_at: new Date().toISOString(),
+      containerConfig: { devAccessEnabled: false },
+    };
+
+    const mod = await import('./container-runner.js');
+    const mounts = mod.buildVolumeMounts(group, true);
+
+    const devMount = mounts.find((m) => m.containerPath === '/workspace/dev');
+    expect(devMount).toBeUndefined();
   });
 });
