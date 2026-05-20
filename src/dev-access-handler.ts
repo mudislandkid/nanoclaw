@@ -430,13 +430,11 @@ export function startDevAccessHandler(deps: DevAccessDeps): DevAccessHandler {
             .map((g) => g.folder),
         );
 
-        const groupFolders = fs
-          .readdirSync(ipcBase)
-          .filter((f) => {
-            if (!devAccessGroupFolders.has(f)) return false;
-            const stat = fs.statSync(path.join(ipcBase, f));
-            return stat.isDirectory();
-          });
+        const groupFolders = fs.readdirSync(ipcBase).filter((f) => {
+          if (!devAccessGroupFolders.has(f)) return false;
+          const stat = fs.statSync(path.join(ipcBase, f));
+          return stat.isDirectory();
+        });
 
         for (const groupFolder of groupFolders) {
           const dir = getRequestsDir(groupFolder);

@@ -126,7 +126,11 @@ describe('allowlist-writer', () => {
   it('normalises path on add — trailing slash deduplicates with non-trailing-slash entry', async () => {
     const initial = {
       allowedRoots: [
-        { path: '/Volumes/1tbSSD/VoltWise', allowReadWrite: true, overrideNonMainReadOnly: true },
+        {
+          path: '/Volumes/1tbSSD/VoltWise',
+          allowReadWrite: true,
+          overrideNonMainReadOnly: true,
+        },
       ],
       blockedPatterns: [],
       nonMainReadOnly: true,
@@ -143,7 +147,11 @@ describe('allowlist-writer', () => {
   it('lists only writable subdirectories under a root', async () => {
     const initial = {
       allowedRoots: [
-        { path: '/Volumes/1tbSSD', allowReadWrite: false, requireApproval: true },
+        {
+          path: '/Volumes/1tbSSD',
+          allowReadWrite: false,
+          requireApproval: true,
+        },
         { path: '/Volumes/1tbSSD/VoltWise', allowReadWrite: true },
         { path: '/Volumes/1tbSSD/Eirene', allowReadWrite: false },
         { path: '/Volumes/other', allowReadWrite: true },

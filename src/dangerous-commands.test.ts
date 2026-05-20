@@ -28,7 +28,9 @@ describe('dangerous-commands', () => {
 
   it('returns "ask" for a pattern in patterns[]', async () => {
     writeConfig({
-      patterns: ['rm\\s+(-[a-zA-Z]*[rRf][a-zA-Z]*\\s+|--force\\s+|--recursive\\s+)'],
+      patterns: [
+        'rm\\s+(-[a-zA-Z]*[rRf][a-zA-Z]*\\s+|--force\\s+|--recursive\\s+)',
+      ],
       hardDenyPatterns: [],
     });
     const mod = await import('./dangerous-commands.js');

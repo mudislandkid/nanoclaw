@@ -58,7 +58,9 @@ export function validateAccessRequest(input: HardRailInput): HardRailResult {
   }
 
   // Outside allowed roots
-  const inRoot = allowedRootPaths.some((root) => isUnderOrEqual(normalised, root));
+  const inRoot = allowedRootPaths.some((root) =>
+    isUnderOrEqual(normalised, root),
+  );
   if (!inRoot) {
     return {
       allowed: false,

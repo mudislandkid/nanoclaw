@@ -14,7 +14,16 @@ const AFFIRMATIVE_WORDS = [
   '👍',
 ];
 
-const NEGATIVE_WORDS = ['no', 'nope', 'nah', 'deny', "don't", 'dont', 'reject', '👎'];
+const NEGATIVE_WORDS = [
+  'no',
+  'nope',
+  'nah',
+  'deny',
+  "don't",
+  'dont',
+  'reject',
+  '👎',
+];
 
 export type ReplyDecision = 'affirmative' | 'negative' | 'none';
 

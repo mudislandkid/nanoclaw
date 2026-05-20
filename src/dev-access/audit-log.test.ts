@@ -41,10 +41,7 @@ describe('appendAuditEntry', () => {
       project: 'VoltWise',
       source: 'signal-reply',
     });
-    const lines = fs
-      .readFileSync(logFile, 'utf-8')
-      .split('\n')
-      .filter(Boolean);
+    const lines = fs.readFileSync(logFile, 'utf-8').split('\n').filter(Boolean);
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('grant');
     expect(lines[1]).toContain('revoke');
